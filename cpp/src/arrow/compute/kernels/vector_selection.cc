@@ -89,7 +89,7 @@ int64_t GetFilterOutputSize(const ArraySpan& filter,
   return output_size;
 }
 
-template <typename RunEndsType>
+template <typename RunEndType>
 int64_t GetFilterOutputSizeREE(const ArraySpan& values, const ArraySpan& filter,
                                FilterOptions::NullSelectionBehavior null_selection) {
   int64_t output_size = 0;
@@ -99,7 +99,7 @@ int64_t GetFilterOutputSizeREE(const ArraySpan& values, const ArraySpan& filter,
   const uint8_t* filter_selection = filter_data.buffers[1].data;
 
   if (!ree_util::ValuesArray(filter).MayHaveNulls()) {
-    for (auto it = ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values, filter);
+    for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
          it != ree_util::MergedRunsIterator(); ++it) {
       if (bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
         output_size++;
@@ -107,8 +107,7 @@ int64_t GetFilterOutputSizeREE(const ArraySpan& values, const ArraySpan& filter,
     }
   } else {  // filter may have nulls
     if (null_selection == FilterOptions::EMIT_NULL) {
-      for (auto it =
-               ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values, filter);
+      for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
            it != ree_util::MergedRunsIterator(); ++it) {
         if (!bit_util::GetBit(filter_is_valid, it.template index_into_buffer<1>()) ||
             bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
@@ -116,8 +115,7 @@ int64_t GetFilterOutputSizeREE(const ArraySpan& values, const ArraySpan& filter,
         }
       }
     } else {
-      for (auto it =
-               ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values, filter);
+      for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
            it != ree_util::MergedRunsIterator(); ++it) {
         if (bit_util::GetBit(filter_is_valid, it.template index_into_buffer<1>()) &&
             bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
@@ -919,7 +917,7 @@ Status PrimitiveFilter(KernelContext* ctx, const ExecSpan& batch, ExecResult* ou
 /// generate one take function for each byte width. We use the same
 /// implementation here for boolean and fixed-byte-size inputs with some
 /// template specialization.
-template <typename RunEndsType, typename ArrowType>
+template <typename RunEndType, typename ArrowType>
 class REEPrimitiveFilterImpl {
  public:
   using T = typename std::conditional<std::is_same<ArrowType, BooleanType>::value,
@@ -946,7 +944,7 @@ class REEPrimitiveFilterImpl {
     }
     assert(out_arr->offset == 0);
     out_position_ = 0;
-    out_run_ends_ = out_arr->child_data[0]->GetMutableValues<RunEndsType>(1);
+    out_run_ends_ = out_arr->child_data[0]->GetMutableValues<RunEndType>(1);
     out_data_ = reinterpret_cast<T*>(out_arr->child_data[1]->buffers[1]->mutable_data());
   }
 
@@ -973,7 +971,7 @@ class REEPrimitiveFilterImpl {
     if (!ree_util::ValuesArray(values_).MayHaveNulls()) {
       if (!ree_util::ValuesArray(filter_).MayHaveNulls()) {
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           if (bit_util::GetBit(filter_data_,
                                it.template index_into_buffer<FILTER_INPUT>())) {
@@ -984,7 +982,7 @@ class REEPrimitiveFilterImpl {
         }
       } else if (null_selection_ == FilterOptions::DROP) {
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           if (bit_util::GetBit(filter_is_valid_,
                                it.template index_into_buffer<FILTER_INPUT>()) &&
@@ -997,7 +995,7 @@ class REEPrimitiveFilterImpl {
         }
       } else {  // null_selection == FilterOptions::EMIT_NULL
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           const bool is_valid = bit_util::GetBit(
               filter_is_valid_, it.template index_into_buffer<FILTER_INPUT>());
@@ -1018,7 +1016,7 @@ class REEPrimitiveFilterImpl {
     } else {  // values input may have nulls
       if (!ree_util::ValuesArray(filter_).MayHaveNulls()) {
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           if (bit_util::GetBit(filter_data_,
                                it.template index_into_buffer<FILTER_INPUT>())) {
@@ -1029,7 +1027,7 @@ class REEPrimitiveFilterImpl {
         }
       } else if (null_selection_ == FilterOptions::DROP) {
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           if (bit_util::GetBit(filter_is_valid_,
                                it.template index_into_buffer<FILTER_INPUT>()) &&
@@ -1042,7 +1040,7 @@ class REEPrimitiveFilterImpl {
         }
       } else {  // null_selection == FilterOptions::EMIT_NULL
         for (auto it =
-                 ree_util::MergedRunsIterator<RunEndsType, RunEndsType>(values_, filter_);
+                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
              it != ree_util::MergedRunsIterator(); ++it) {
           const bool is_valid = bit_util::GetBit(
               filter_is_valid_, it.template index_into_buffer<FILTER_INPUT>());
@@ -1067,7 +1065,7 @@ class REEPrimitiveFilterImpl {
   // Write the next out_position given the selected in_position for the input
   // data and advance out_position
   void WriteValue(int64_t in_position, int64_t run_end) {
-    out_run_ends_[out_position_] = static_cast<RunEndsType>(run_end);
+    out_run_ends_[out_position_] = static_cast<RunEndType>(run_end);
     if constexpr (is_boolean_type<ArrowType>()) {
       bit_util::SetBitTo(out_data_, out_position_,
                          bit_util::GetBit(values_data_, in_position));
@@ -1079,7 +1077,7 @@ class REEPrimitiveFilterImpl {
 
   void WriteNull(int64_t run_end) {
     // Zero the memory
-    out_run_ends_[out_position_] = static_cast<RunEndsType>(run_end);
+    out_run_ends_[out_position_] = static_cast<RunEndType>(run_end);
     if constexpr (is_boolean_type<ArrowType>()) {
       bit_util::ClearBit(out_data_, out_position_);
     } else {
@@ -1097,22 +1095,22 @@ class REEPrimitiveFilterImpl {
   const uint8_t* filter_data_;
   FilterOptions::NullSelectionBehavior null_selection_;
   uint8_t* out_is_valid_;
-  RunEndsType* out_run_ends_;
+  RunEndType* out_run_ends_;
   T* out_data_;
   int64_t& out_logical_length_;
   int64_t out_position_;
 };
 
-template <typename RunEndsType>
-Status REEPrimitiveFilterForRunEndsType(KernelContext* ctx, const ExecSpan& span,
-                                        ExecResult* result) {
+template <typename RunEndType>
+Status REEPrimitiveFilterForRunEndType(KernelContext* ctx, const ExecSpan& span,
+                                       ExecResult* result) {
   auto values = span.values[0].array;
   auto filter = span.values[1].array;
   FilterOptions::NullSelectionBehavior null_selection =
       FilterState::Get(ctx).null_selection_behavior;
 
   int64_t output_length =
-      GetFilterOutputSizeREE<RunEndsType>(values, filter, null_selection);
+      GetFilterOutputSizeREE<RunEndType>(values, filter, null_selection);
 
   ArrayData* out_arr = result->array_data().get();
   // REE parent arrays always have a null count of 0
@@ -1129,28 +1127,28 @@ Status REEPrimitiveFilterForRunEndsType(KernelContext* ctx, const ExecSpan& span
 
   switch (bit_width) {
     case 1:
-      REEPrimitiveFilterImpl<RunEndsType, BooleanType>(values, filter, null_selection,
-                                                       out_arr)
+      REEPrimitiveFilterImpl<RunEndType, BooleanType>(values, filter, null_selection,
+                                                      out_arr)
           .Exec();
       break;
     case 8:
-      REEPrimitiveFilterImpl<RunEndsType, UInt8Type>(values, filter, null_selection,
-                                                     out_arr)
+      REEPrimitiveFilterImpl<RunEndType, UInt8Type>(values, filter, null_selection,
+                                                    out_arr)
           .Exec();
       break;
     case 16:
-      REEPrimitiveFilterImpl<RunEndsType, UInt16Type>(values, filter, null_selection,
-                                                      out_arr)
+      REEPrimitiveFilterImpl<RunEndType, UInt16Type>(values, filter, null_selection,
+                                                     out_arr)
           .Exec();
       break;
     case 32:
-      REEPrimitiveFilterImpl<RunEndsType, UInt32Type>(values, filter, null_selection,
-                                                      out_arr)
+      REEPrimitiveFilterImpl<RunEndType, UInt32Type>(values, filter, null_selection,
+                                                     out_arr)
           .Exec();
       break;
     case 64:
-      REEPrimitiveFilterImpl<RunEndsType, UInt64Type>(values, filter, null_selection,
-                                                      out_arr)
+      REEPrimitiveFilterImpl<RunEndType, UInt64Type>(values, filter, null_selection,
+                                                     out_arr)
           .Exec();
       break;
     default:
@@ -1165,11 +1163,11 @@ Status REEPrimitiveFilter(KernelContext* ctx, const ExecSpan& span, ExecResult* 
       checked_cast<const RunEndEncodedType&>(*span.GetTypes()[0]).run_end_type();
   switch (run_end_type->id()) {
     case Type::INT16:
-      return REEPrimitiveFilterForRunEndsType<int16_t>(ctx, span, result);
+      return REEPrimitiveFilterForRunEndType<int16_t>(ctx, span, result);
     case Type::INT32:
-      return REEPrimitiveFilterForRunEndsType<int32_t>(ctx, span, result);
+      return REEPrimitiveFilterForRunEndType<int32_t>(ctx, span, result);
     case Type::INT64:
-      return REEPrimitiveFilterForRunEndsType<int64_t>(ctx, span, result);
+      return REEPrimitiveFilterForRunEndType<int64_t>(ctx, span, result);
     default:
       return Status::Invalid("Invalid run ends type: ", *run_end_type);
   }
