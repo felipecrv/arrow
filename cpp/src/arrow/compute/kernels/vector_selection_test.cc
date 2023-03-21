@@ -164,7 +164,7 @@ TEST(GetTakeIndices, RandomlyGenerated) {
 
 std::shared_ptr<Array> CoalesceNullToFalse(std::shared_ptr<Array> filter) {
   const bool is_ree = filter->type_id() == Type::RUN_END_ENCODED;
-  // work directly on run values array in case of REE
+  // Work directly on run values array in case of REE
   const ArrayData& data = is_ree ? *filter->data()->child_data[1] : *filter->data();
   if (data.GetNullCount() == 0) {
     return filter;
@@ -175,13 +175,12 @@ std::shared_ptr<Array> CoalesceNullToFalse(std::shared_ptr<Array> filter) {
                                                  data.offset);
   EXPECT_OK_AND_ASSIGN(Datum out_datum, And(is_true, is_valid));
   if (is_ree) {
-    auto& ree_filter = dynamic_cast<RunEndEncodedArray&>(*filter);
-    return RunEndEncodedArray::Make(ree_filter.run_ends(), out_datum.make_array(),
-                                    ree_filter.length(), ree_filter.offset())
+    const auto& ree_filter = dynamic_cast<const RunEndEncodedArray&>(*filter);
+    return RunEndEncodedArray::Make(ree_filter.length(), ree_filter.run_ends(),
+                                    out_datum.make_array(), ree_filter.offset())
         .ValueOrDie();
-  } else {
-    return out_datum.make_array();
   }
+  return out_datum.make_array();
 }
 
 class TestFilterKernel : public ::testing::Test {
@@ -191,8 +190,8 @@ class TestFilterKernel : public ::testing::Test {
   void AddArtificialOffsetInChildArray(ArrayData* array, int64_t offset) {
     auto& child = array->child_data[1];
     auto builder = MakeBuilder(child->type).ValueOrDie();
-    ARROW_CHECK_OK(builder->AppendNulls(offset));
-    ARROW_CHECK_OK(builder->AppendArraySlice(ArraySpan(*child), 0, child->length));
+    ASSERT_OK(builder->AppendNulls(offset));
+    ASSERT_OK(builder->AppendArraySlice(ArraySpan(*child), 0, child->length));
     array->child_data[1] = builder->Finish().ValueOrDie()->Slice(offset)->data();
   }
 
@@ -265,9 +264,11 @@ class TestFilterKernel : public ::testing::Test {
         ARROW_SCOPED_TRACE(
             "for run-end encoded values and filter with sliced child arrays");
         auto values_ree_sliced = values_ree.array()->Copy();
-        AddArtificialOffsetInChildArray(values_ree_sliced.get(), 2);
+        ASSERT_NO_FATAL_FAILURE(
+            AddArtificialOffsetInChildArray(values_ree_sliced.get(), 2));
         auto filter_ree_sliced = filter_ree.array()->Copy();
-        AddArtificialOffsetInChildArray(filter_ree_sliced.get(), 1000);
+        ASSERT_NO_FATAL_FAILURE(
+            AddArtificialOffsetInChildArray(filter_ree_sliced.get(), 1000));
         DoAssertFilter(values_ree.make_array(), filter_ree.make_array(),
                        expected_ree.make_array());
       }
@@ -307,7 +308,7 @@ class TestFilterKernel : public ::testing::Test {
                  ArrayFromJSON(type, expected));
   }
 
-  FilterOptions emit_null_, drop_;
+  const FilterOptions emit_null_, drop_;
 };
 
 void ValidateFilter(const std::shared_ptr<Array>& values,

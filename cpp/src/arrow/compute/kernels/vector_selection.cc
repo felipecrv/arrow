@@ -45,7 +45,6 @@
 #include "arrow/util/bitmap_reader.h"
 #include "arrow/util/checked_cast.h"
 #include "arrow/util/int_util.h"
-#include "arrow/util/ree_util.h"
 
 namespace arrow {
 
@@ -86,44 +85,6 @@ int64_t GetFilterOutputSize(const ArraySpan& filter,
   } else {
     // The filter has no nulls, so we can use CountSetBits
     output_size = CountSetBits(filter.buffers[1].data, filter.offset, filter.length);
-  }
-  return output_size;
-}
-
-template <typename RunEndType>
-int64_t GetFilterOutputSizeREE(const ArraySpan& values, const ArraySpan& filter,
-                               FilterOptions::NullSelectionBehavior null_selection) {
-  int64_t output_size = 0;
-
-  const ArraySpan& filter_data = ree_util::ValuesArray(filter);
-  const uint8_t* filter_is_valid = filter_data.buffers[0].data;
-  const uint8_t* filter_selection = filter_data.buffers[1].data;
-
-  if (!ree_util::ValuesArray(filter).MayHaveNulls()) {
-    for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
-         it != ree_util::MergedRunsIterator(); ++it) {
-      if (bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
-        output_size++;
-      }
-    }
-  } else {  // filter may have nulls
-    if (null_selection == FilterOptions::EMIT_NULL) {
-      for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
-           it != ree_util::MergedRunsIterator(); ++it) {
-        if (!bit_util::GetBit(filter_is_valid, it.template index_into_buffer<1>()) ||
-            bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
-          output_size++;
-        }
-      }
-    } else {
-      for (auto it = ree_util::MergedRunsIterator<RunEndType, RunEndType>(values, filter);
-           it != ree_util::MergedRunsIterator(); ++it) {
-        if (bit_util::GetBit(filter_is_valid, it.template index_into_buffer<1>()) &&
-            bit_util::GetBit(filter_selection, it.template index_into_buffer<1>())) {
-          output_size++;
-        }
-      }
-    }
   }
   return output_size;
 }
@@ -298,34 +259,42 @@ Status PreallocateData(KernelContext* ctx, int64_t length, int bit_width,
   return Status::OK();
 }
 
-Status PreallocateDataREE(KernelContext* ctx, int64_t physical_length, int bit_width,
-                          bool allocate_validity, ArrayData* out) {
-  // Preallocate memory
+// This is called from a template with many instantiations, so we don't want to
+// inline it.
+ARROW_NOINLINE Status PreallocateREEData(KernelContext* ctx, int64_t physical_length,
+                                         bool allocate_validity, ArrayData* out) {
+  const auto* ree_type = checked_cast<RunEndEncodedType*>(out->type.get());
+  // out->length is set after the filter is computed
+  out->null_count = 0;
   out->buffers = {NULLPTR};
-  out->child_data = {NULLPTR, NULLPTR};
 
-  auto& ree_type = checked_cast<RunEndEncodedType&>(*out->type);
-  auto values_array = std::make_shared<ArrayData>(ree_type.value_type(), physical_length);
-  values_array->buffers = {NULLPTR, NULLPTR};
-  auto run_ends_array = std::make_shared<ArrayData>(ree_type.run_end_type(),
-                                                    physical_length, /*null_count=*/0);
-  run_ends_array->buffers = {NULLPTR, NULLPTR};
-
-  if (allocate_validity) {
-    ARROW_ASSIGN_OR_RAISE(values_array->buffers[0], ctx->AllocateBitmap(physical_length));
+  std::shared_ptr<ArrayData> run_ends_data;
+  {
+    run_ends_data = std::make_shared<ArrayData>(ree_type->run_end_type(), physical_length,
+                                                /*null_count=*/0);
+    ARROW_ASSIGN_OR_RAISE(
+        auto run_ends_buffer,
+        ctx->Allocate(physical_length * ree_type->run_end_type()->byte_width()));
+    run_ends_data->buffers = {NULLPTR, std::move(run_ends_buffer)};
   }
-  if (bit_width == 1) {
-    ARROW_ASSIGN_OR_RAISE(values_array->buffers[1], ctx->AllocateBitmap(physical_length));
-  } else {
-    ARROW_ASSIGN_OR_RAISE(values_array->buffers[1],
-                          ctx->Allocate(physical_length * bit_width / 8));
-  }
-  ARROW_ASSIGN_OR_RAISE(
-      run_ends_array->buffers[1],
-      ctx->Allocate(physical_length * ree_type.run_end_type()->bit_width() / 8));
 
-  out->child_data[0] = std::move(run_ends_array);
-  out->child_data[1] = std::move(values_array);
+  std::shared_ptr<ArrayData> values_data;
+  {
+    const auto& value_type = ree_type->value_type();
+    values_data = std::make_shared<ArrayData>(value_type, physical_length);
+    values_data->buffers = {NULLPTR, NULLPTR};
+    if (allocate_validity) {
+      ARROW_ASSIGN_OR_RAISE(values_data->buffers[0],
+                            ctx->AllocateBitmap(physical_length));
+    }
+    ARROW_ASSIGN_OR_RAISE(
+        values_data->buffers[1],
+        (value_type->bit_width() == 1)
+            ? ctx->AllocateBitmap(physical_length)
+            : ctx->Allocate(physical_length * value_type->byte_width()));
+  }
+  out->child_data = {std::move(run_ends_data), std::move(values_data)};
+
   return Status::OK();
 }
 
@@ -913,28 +882,45 @@ Status PrimitiveFilter(KernelContext* ctx, const ExecSpan& batch, ExecResult* ou
   return Status::OK();
 }
 
-/// \brief The Filter implementation for primitive (fixed-width) types does not
-/// use the logical Arrow type but rather the physical C type. This way we only
-/// generate one take function for each byte width. We use the same
-/// implementation here for boolean and fixed-byte-size inputs with some
-/// template specialization.
-template <typename RunEndType, typename ArrowType>
-class REEPrimitiveFilterImpl {
+/// \brief Implementation of run-end encoded filter for primitive types
+///
+/// This implementation for primitive (fixed-width) types does not use the logical Arrow
+/// type but rather the physical C type. This reduces the number of specializations needed
+/// for the different Arrow types. This is possible because no arithmetic is performed on
+/// the values.
+template <typename RunEndType, typename FilterRunEndType, typename ValueType>
+class REEPrimitiveREEFilterImpl {
  public:
-  using T = typename std::conditional<std::is_same<ArrowType, BooleanType>::value,
-                                      uint8_t, typename ArrowType::c_type>::type;
+  using RunEndCType = typename RunEndType::c_type;
+  using FilterRunEndCType = typename FilterRunEndType::c_type;
 
-  REEPrimitiveFilterImpl(const ArraySpan& values, const ArraySpan& filter,
-                         FilterOptions::NullSelectionBehavior null_selection,
-                         ArrayData* out_arr)
+  using CType = typename std::conditional<std::is_same<ValueType, BooleanType>::value,
+                                          uint8_t, typename ValueType::c_type>::type;
+
+ private:
+  const ArraySpan& values_;
+  const uint8_t* values_is_valid_;
+  const CType* values_data_;
+  const ArraySpan& filter_;
+  const uint8_t* filter_is_valid_;
+  const uint8_t* filter_data_;
+  FilterOptions::NullSelectionBehavior null_selection_;
+  uint8_t* out_is_valid_;
+  RunEndCType* out_run_ends_;
+  CType* out_data_;
+  int64_t out_position_;
+
+ public:
+  REEPrimitiveREEFilterImpl(const ArraySpan& values, const ArraySpan& filter,
+                            FilterOptions::NullSelectionBehavior null_selection,
+                            ArrayData* out_arr)
       : values_{values},
         values_is_valid_(ree_util::ValuesArray(values).buffers[0].data),
-        values_data_(ree_util::ValuesArray(values).GetValues<T>(1, 0)),
+        values_data_(ree_util::ValuesArray(values).GetValues<CType>(1, 0)),
         filter_{filter},
         filter_is_valid_(ree_util::ValuesArray(filter).buffers[0].data),
         filter_data_(ree_util::ValuesArray(filter).buffers[1].data),
-        null_selection_(null_selection),
-        out_logical_length_(out_arr->length) {
+        null_selection_(null_selection) {
     const std::shared_ptr<Buffer>& out_validity_buffer =
         out_arr->child_data[1]->buffers[0];
     if (out_validity_buffer != NULLPTR) {
@@ -943,131 +929,19 @@ class REEPrimitiveFilterImpl {
     } else {
       out_is_valid_ = NULLPTR;
     }
-    assert(out_arr->offset == 0);
+    DCHECK_EQ(out_arr->offset, 0);
     out_position_ = 0;
-    out_run_ends_ = out_arr->child_data[0]->GetMutableValues<RunEndType>(1);
-    out_data_ = reinterpret_cast<T*>(out_arr->child_data[1]->buffers[1]->mutable_data());
+    out_run_ends_ = out_arr->child_data[0]->GetMutableValues<RunEndCType>(1);
+    out_data_ =
+        reinterpret_cast<CType*>(out_arr->child_data[1]->buffers[1]->mutable_data());
   }
 
-  void Exec() {
-    auto WriteNotNull = [&](int64_t in_position, int64_t run_length) {
-      bit_util::SetBit(out_is_valid_, out_position_);
-      // Increments out_position_
-      WriteValue(in_position, run_length);
-    };
-
-    auto WriteMaybeNull = [&](int64_t in_position, int64_t run_length) {
-      bit_util::SetBitTo(out_is_valid_, out_position_,
-                         bit_util::GetBit(values_is_valid_, in_position));
-      // Increments out_position_
-      WriteValue(in_position, run_length);
-    };
-
-    enum {
-      VALUE_INPUT = 0,
-      FILTER_INPUT = 1,
-    };
-
-    int64_t accumulated_run_length = 0;
-    if (!ree_util::ValuesArray(values_).MayHaveNulls()) {
-      if (!ree_util::ValuesArray(filter_).MayHaveNulls()) {
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          if (bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteValue(it.template index_into_buffer<VALUE_INPUT>(),
-                       accumulated_run_length);
-          }
-        }
-      } else if (null_selection_ == FilterOptions::DROP) {
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          if (bit_util::GetBit(filter_is_valid_,
-                               it.template index_into_buffer<FILTER_INPUT>()) &&
-              bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteValue(it.template index_into_buffer<VALUE_INPUT>(),
-                       accumulated_run_length);
-          }
-        }
-      } else {  // null_selection == FilterOptions::EMIT_NULL
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          const bool is_valid = bit_util::GetBit(
-              filter_is_valid_, it.template index_into_buffer<FILTER_INPUT>());
-          if (is_valid &&
-              bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteNotNull(it.template index_into_buffer<VALUE_INPUT>(),
-                         accumulated_run_length);
-          }
-          if (!is_valid) {
-            accumulated_run_length += it.run_length();
-            bit_util::ClearBit(out_is_valid_, out_position_);
-            WriteNull(accumulated_run_length);
-          }
-        }
-      }
-    } else {  // values input may have nulls
-      if (!ree_util::ValuesArray(filter_).MayHaveNulls()) {
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          if (bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteMaybeNull(it.template index_into_buffer<VALUE_INPUT>(),
-                           accumulated_run_length);
-          }
-        }
-      } else if (null_selection_ == FilterOptions::DROP) {
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          if (bit_util::GetBit(filter_is_valid_,
-                               it.template index_into_buffer<FILTER_INPUT>()) &&
-              bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteMaybeNull(it.template index_into_buffer<VALUE_INPUT>(),
-                           accumulated_run_length);
-          }
-        }
-      } else {  // null_selection == FilterOptions::EMIT_NULL
-        for (auto it =
-                 ree_util::MergedRunsIterator<RunEndType, RunEndType>(values_, filter_);
-             it != ree_util::MergedRunsIterator(); ++it) {
-          const bool is_valid = bit_util::GetBit(
-              filter_is_valid_, it.template index_into_buffer<FILTER_INPUT>());
-          if (is_valid &&
-              bit_util::GetBit(filter_data_,
-                               it.template index_into_buffer<FILTER_INPUT>())) {
-            accumulated_run_length += it.run_length();
-            WriteMaybeNull(it.template index_into_buffer<VALUE_INPUT>(),
-                           accumulated_run_length);
-          }
-          if (!is_valid) {
-            accumulated_run_length += it.run_length();
-            bit_util::ClearBit(out_is_valid_, out_position_);
-            WriteNull(accumulated_run_length);
-          }
-        }
-      }
-    }
-    out_logical_length_ = accumulated_run_length;
-  }
-
+ private:
   // Write the next out_position given the selected in_position for the input
   // data and advance out_position
   void WriteValue(int64_t in_position, int64_t run_end) {
-    out_run_ends_[out_position_] = static_cast<RunEndType>(run_end);
-    if constexpr (is_boolean_type<ArrowType>()) {
+    out_run_ends_[out_position_] = static_cast<RunEndCType>(run_end);
+    if constexpr (is_boolean_type<ValueType>()) {
       bit_util::SetBitTo(out_data_, out_position_,
                          bit_util::GetBit(values_data_, in_position));
     } else {
@@ -1078,100 +952,224 @@ class REEPrimitiveFilterImpl {
 
   void WriteNull(int64_t run_end) {
     // Zero the memory
-    out_run_ends_[out_position_] = static_cast<RunEndType>(run_end);
-    if constexpr (is_boolean_type<ArrowType>()) {
+    out_run_ends_[out_position_] = static_cast<RunEndCType>(run_end);
+    if constexpr (is_boolean_type<ValueType>()) {
       bit_util::ClearBit(out_data_, out_position_);
     } else {
-      out_data_[out_position_] = T{};
+      out_data_[out_position_] = CType{};
     }
     out_position_++;
   }
 
- private:
-  const ArraySpan& values_;
-  const uint8_t* values_is_valid_;
-  const T* values_data_;
-  const ArraySpan& filter_;
-  const uint8_t* filter_is_valid_;
-  const uint8_t* filter_data_;
-  FilterOptions::NullSelectionBehavior null_selection_;
-  uint8_t* out_is_valid_;
-  RunEndType* out_run_ends_;
-  T* out_data_;
-  int64_t& out_logical_length_;
-  int64_t out_position_;
+  void WriteNotNull(int64_t in_position, int64_t run_end) {
+    bit_util::SetBit(out_is_valid_, out_position_);
+    // Increments out_position_
+    WriteValue(in_position, run_end);
+  }
+
+  void WriteMaybeNull(int64_t in_position, int64_t run_end) {
+    bit_util::SetBitTo(out_is_valid_, out_position_,
+                       bit_util::GetBit(values_is_valid_, in_position));
+    // Increments out_position_
+    WriteValue(in_position, run_end);
+  }
+
+ public:
+  /// \brief Compute the filter and returns the logical length of the output
+  [[nodiscard]] int64_t Exec() {
+    enum {
+      VALUE_INPUT = 0,
+      FILTER_INPUT = 1,
+    };
+
+    int64_t logical_length = 0;
+    const auto& values_array = ree_util::ValuesArray(values_);
+    const auto& filter_values_array = ree_util::ValuesArray(filter_);
+    const int64_t values_offset = values_array.offset;
+    const int64_t filter_offset = filter_values_array.offset;
+
+    const ree_util::RunEndEncodedArraySpan<RunEndCType> values_run_ends(values_);
+    const ree_util::RunEndEncodedArraySpan<FilterRunEndCType> filter_run_ends(filter_);
+    ree_util::MergedRunsIterator it(values_run_ends, filter_run_ends);
+    if (!values_array.MayHaveNulls()) {
+      if (!filter_values_array.MayHaveNulls()) {
+        while (!it.isEnd()) {
+          const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+          const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+          if (bit_util::GetBit(filter_data_, f)) {
+            logical_length += it.run_length();
+            WriteValue(v, /*run_end=*/logical_length);
+          }
+          ++it;
+        }
+      } else if (null_selection_ == FilterOptions::DROP) {
+        while (!it.isEnd()) {
+          const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+          const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+          if (bit_util::GetBit(filter_is_valid_, f) &&
+              bit_util::GetBit(filter_data_, f)) {
+            logical_length += it.run_length();
+            WriteValue(v, /*run_end=*/logical_length);
+          }
+          ++it;
+        }
+      } else {  // null_selection == FilterOptions::EMIT_NULL
+        while (!it.isEnd()) {
+          const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+          const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+          const bool is_valid = bit_util::GetBit(filter_is_valid_, f);
+          if (is_valid) {
+            if (bit_util::GetBit(filter_data_, f)) {
+              logical_length += it.run_length();
+              WriteNotNull(v, /*run_end=*/logical_length);
+            }
+          } else {
+            logical_length += it.run_length();
+            bit_util::ClearBit(out_is_valid_, out_position_);
+            WriteNull(logical_length);
+          }
+          ++it;
+        }
+      }
+    } else {  // values input may have nulls
+      if (!filter_values_array.MayHaveNulls()) {
+        const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+        const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+        while (!it.isEnd()) {
+          if (bit_util::GetBit(filter_data_, f)) {
+            logical_length += it.run_length();
+            WriteMaybeNull(v, /*run_end=*/logical_length);
+          }
+          ++it;
+        }
+      } else if (null_selection_ == FilterOptions::DROP) {
+        while (!it.isEnd()) {
+          const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+          const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+          if (bit_util::GetBit(filter_is_valid_, f) &&
+              bit_util::GetBit(filter_data_, f)) {
+            logical_length += it.run_length();
+            WriteMaybeNull(v, /*run_end=*/logical_length);
+          }
+          ++it;
+        }
+      } else {  // null_selection == FilterOptions::EMIT_NULL
+        while (!it.isEnd()) {
+          const int64_t f = filter_offset + it.template index_into_array<FILTER_INPUT>();
+          const int64_t v = values_offset + it.template index_into_array<VALUE_INPUT>();
+          const bool is_valid = bit_util::GetBit(filter_is_valid_, f);
+          if (is_valid && bit_util::GetBit(filter_data_, f)) {
+            logical_length += it.run_length();
+            WriteMaybeNull(v, /*run_end=*/logical_length);
+          }
+          if (!is_valid) {
+            logical_length += it.run_length();
+            bit_util::ClearBit(out_is_valid_, out_position_);
+            WriteNull(logical_length);
+          }
+          ++it;
+        }
+      }
+    }
+    return logical_length;
+  }
 };
 
-template <typename RunEndType>
-Status REEPrimitiveFilterForRunEndType(KernelContext* ctx, const ExecSpan& span,
-                                       ExecResult* result) {
-  auto values = span.values[0].array;
-  auto filter = span.values[1].array;
-  FilterOptions::NullSelectionBehavior null_selection =
-      FilterState::Get(ctx).null_selection_behavior;
+template <typename ValueRunEndType, typename FilterRunEndType>
+Status REEPrimitiveREEFilterTemplate(KernelContext* ctx, const ExecSpan& span,
+                                     ArrayData* out) {
+  const auto& values = span.values[0].array;
+  const auto& filter = span.values[1].array;
+  const auto null_selection = FilterState::Get(ctx).null_selection_behavior;
 
-  int64_t output_length =
-      GetFilterOutputSizeREE<RunEndType>(values, filter, null_selection);
+  ARROW_ASSIGN_OR_RAISE(const int64_t physical_length,
+                        CalculateREExREEFilterOutputSize(values, filter, null_selection));
+  const bool allocate_validity = ree_util::ValuesArray(values).MayHaveNulls() ||
+                                 (null_selection == FilterOptions::EMIT_NULL &&
+                                  ree_util::ValuesArray(filter).MayHaveNulls());
 
-  ArrayData* out_arr = result->array_data().get();
-  // REE parent arrays always have a null count of 0
-  out_arr->null_count = 0;
-
-  bool allocate_validity = ree_util::ValuesArray(values).MayHaveNulls() ||
-                           (null_selection == FilterOptions::EMIT_NULL &&
-                            ree_util::ValuesArray(filter).MayHaveNulls());
-
+  RETURN_NOT_OK(PreallocateREEData(ctx, physical_length, allocate_validity, out));
+  int64_t logical_length;
+#define REE_PRIMITIVE_REE_FILTER_CASE(BIT_WIDTH, TYPE_CLASS)                      \
+  case BIT_WIDTH:                                                                 \
+    logical_length =                                                              \
+        REEPrimitiveREEFilterImpl<ValueRunEndType, FilterRunEndType, TYPE_CLASS>( \
+            values, filter, null_selection, out)                                  \
+            .Exec();                                                              \
+    break;
   const int bit_width =
       checked_cast<const RunEndEncodedType*>(values.type)->value_type()->bit_width();
-  RETURN_NOT_OK(
-      PreallocateDataREE(ctx, output_length, bit_width, allocate_validity, out_arr));
-
   switch (bit_width) {
-    case 1:
-      REEPrimitiveFilterImpl<RunEndType, BooleanType>(values, filter, null_selection,
-                                                      out_arr)
-          .Exec();
-      break;
-    case 8:
-      REEPrimitiveFilterImpl<RunEndType, UInt8Type>(values, filter, null_selection,
-                                                    out_arr)
-          .Exec();
-      break;
-    case 16:
-      REEPrimitiveFilterImpl<RunEndType, UInt16Type>(values, filter, null_selection,
-                                                     out_arr)
-          .Exec();
-      break;
-    case 32:
-      REEPrimitiveFilterImpl<RunEndType, UInt32Type>(values, filter, null_selection,
-                                                     out_arr)
-          .Exec();
-      break;
-    case 64:
-      REEPrimitiveFilterImpl<RunEndType, UInt64Type>(values, filter, null_selection,
-                                                     out_arr)
-          .Exec();
-      break;
+    REE_PRIMITIVE_REE_FILTER_CASE(1, BooleanType);
+    REE_PRIMITIVE_REE_FILTER_CASE(8, UInt8Type);
+    REE_PRIMITIVE_REE_FILTER_CASE(16, UInt16Type);
+    REE_PRIMITIVE_REE_FILTER_CASE(32, UInt32Type);
+    REE_PRIMITIVE_REE_FILTER_CASE(64, UInt64Type);
     default:
-      return Status::NotImplemented(std::string("REEFilter of fixed bit width ") +
-                                    std::to_string(bit_width));
+      return Status::NotImplemented(
+          std::string("Run-end encoded filter of fixed bit width ") +
+          std::to_string(bit_width));
   }
+#undef REE_PRIMITIVE_REE_FILTER_CASE
+  // Set length now that we know it (PreallocateREEData filled all the other fields)
+  out->length = logical_length;
+
   return Status::OK();
 }
 
-Status REEPrimitiveFilter(KernelContext* ctx, const ExecSpan& span, ExecResult* result) {
-  auto& run_end_type =
-      checked_cast<const RunEndEncodedType&>(*span.GetTypes()[0]).run_end_type();
-  switch (run_end_type->id()) {
+Status REEPrimitiveREEFilter(KernelContext* ctx, const ExecSpan& span,
+                             ExecResult* result) {
+  const auto& values = span.values[0].array;
+  const auto& filter = span.values[1].array;
+  ArrayData* out = result->array_data().get();
+  DCHECK(out->type->Equals(*values.type));
+
+  const auto* values_ree_type = checked_cast<const RunEndEncodedType*>(values.type);
+  const auto* filter_ree_type = checked_cast<const RunEndEncodedType*>(filter.type);
+  const auto value_run_end_type_id = values_ree_type->run_end_type()->id();
+  const auto filter_run_end_type_id = filter_ree_type->run_end_type()->id();
+  switch (value_run_end_type_id) {
     case Type::INT16:
-      return REEPrimitiveFilterForRunEndType<int16_t>(ctx, span, result);
+      switch (filter_run_end_type_id) {
+        case Type::INT16:
+          return REEPrimitiveREEFilterTemplate<Int16Type, Int16Type>(ctx, span, out);
+        case Type::INT32:
+          return REEPrimitiveREEFilterTemplate<Int16Type, Int32Type>(ctx, span, out);
+        case Type::INT64:
+          return REEPrimitiveREEFilterTemplate<Int16Type, Int64Type>(ctx, span, out);
+        default:
+          break;
+      }
+      break;
     case Type::INT32:
-      return REEPrimitiveFilterForRunEndType<int32_t>(ctx, span, result);
+      switch (filter_run_end_type_id) {
+        case Type::INT16:
+          return REEPrimitiveREEFilterTemplate<Int32Type, Int16Type>(ctx, span, out);
+        case Type::INT32:
+          return REEPrimitiveREEFilterTemplate<Int32Type, Int32Type>(ctx, span, out);
+        case Type::INT64:
+          return REEPrimitiveREEFilterTemplate<Int32Type, Int64Type>(ctx, span, out);
+        default:
+          break;
+      };
+      break;
     case Type::INT64:
-      return REEPrimitiveFilterForRunEndType<int64_t>(ctx, span, result);
+      switch (filter_run_end_type_id) {
+        case Type::INT16:
+          return REEPrimitiveREEFilterTemplate<Int64Type, Int16Type>(ctx, span, out);
+        case Type::INT32:
+          return REEPrimitiveREEFilterTemplate<Int64Type, Int32Type>(ctx, span, out);
+        case Type::INT64:
+          return REEPrimitiveREEFilterTemplate<Int64Type, Int64Type>(ctx, span, out);
+        default:
+          break;
+      };
+      break;
     default:
-      return Status::Invalid("Invalid run ends type: ", *run_end_type);
+      return Status::Invalid("Invalid run end type: ", *values_ree_type->run_end_type());
   }
+
+  return Status::Invalid("Invalid run end type: ", *filter_ree_type->run_end_type());
 }
 
 // ----------------------------------------------------------------------
@@ -2833,7 +2831,7 @@ void RegisterVectorSelection(FunctionRegistry* registry) {
       {InputType(Type::MAP), InputType(Type::BOOL), FilterExec<ListImpl<MapType>>},
       {InputType(match::RunEndEncoded(match::Primitive())),
        InputType(match::RunEndEncoded(match::SameTypeId(Type::BOOL))),
-       REEPrimitiveFilter},
+       REEPrimitiveREEFilter},
   };
 
   VectorKernel filter_base;
