@@ -442,6 +442,7 @@ template <>
 struct TypeTraits<ListViewType> {
   using ArrayType = ListViewArray;
   // TODO(felipecrv): Add BuilderType
+  using ScalarType = ListViewScalar;
 
   constexpr static bool is_parameter_free = false;
 };
@@ -450,6 +451,7 @@ template <>
 struct TypeTraits<LargeListViewType> {
   using ArrayType = LargeListViewArray;
   // TODO(felipecrv): Add BuilderType
+  using ScalarType = LargeListViewScalar;
 
   constexpr static bool is_parameter_free = false;
 };

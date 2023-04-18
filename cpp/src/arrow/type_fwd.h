@@ -142,9 +142,11 @@ struct LargeListScalar;
 
 class ListViewType;
 class ListViewArray;
+struct ListViewScalar;
 
 class LargeListViewType;
 class LargeListViewArray;
+struct LargeListViewScalar;
 
 class MapType;
 class MapArray;
