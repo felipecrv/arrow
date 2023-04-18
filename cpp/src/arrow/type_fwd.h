@@ -139,6 +139,7 @@ class LargeListBuilder;
 struct LargeListScalar;
 
 class ListViewType;
+class ListViewArray;
 
 class MapType;
 class MapArray;

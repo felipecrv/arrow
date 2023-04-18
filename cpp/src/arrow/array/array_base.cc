@@ -94,7 +94,11 @@ struct ScalarFromArraySlotImpl {
 
   template <typename T>
   Status Visit(const BaseListArray<T>& a) {
-    return Finish(a.value_slice(index_));
+    if constexpr (T::type_id == Type::LIST_VIEW) {
+      return Finish(reinterpret_cast<const ListViewArray&>(a).value_slice(index_));
+    } else {
+      return Finish(a.value_slice(index_));
+    }
   }
 
   Status Visit(const FixedSizeListArray& a) { return Finish(a.value_slice(index_)); }

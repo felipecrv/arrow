@@ -88,6 +88,7 @@ class BaseListArray : public Array {
     return raw_value_offsets_[i + data_->offset];
   }
   offset_type value_length(int64_t i) const {
+    static_assert(TYPE::type_id != Type::LIST_VIEW, "ListView offsets are not sorted");
     i += data_->offset;
     return raw_value_offsets_[i + 1] - raw_value_offsets_[i];
   }

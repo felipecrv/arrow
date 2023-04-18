@@ -439,6 +439,14 @@ struct TypeTraits<LargeListType> {
 };
 
 template <>
+struct TypeTraits<ListViewType> {
+  using ArrayType = ListViewArray;
+  // TODO(felipecrv): Add BuilderType
+
+  constexpr static bool is_parameter_free = false;
+};
+
+template <>
 struct TypeTraits<MapType> {
   using ArrayType = MapArray;
   using BuilderType = MapBuilder;

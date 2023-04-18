@@ -155,6 +155,7 @@ set(ARROW_SRCS
     array/concatenate.cc
     array/data.cc
     array/diff.cc
+    array/list_view.cc
     array/util.cc
     array/validate.cc
     builder.cc

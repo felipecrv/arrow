@@ -28,6 +28,8 @@
 #include "arrow/array/array_base.h"
 #include "arrow/array/array_primitive.h"
 #include "arrow/array/concatenate.h"
+// TODO(felipecrv): move this into array_nested.h
+#include "arrow/array/list_view.h"
 #include "arrow/array/util.h"
 #include "arrow/buffer.h"
 #include "arrow/status.h"
@@ -48,7 +50,7 @@ using internal::checked_pointer_cast;
 using internal::CopyBitmap;
 
 // ----------------------------------------------------------------------
-// ListArray / LargeListArray
+// ListArray / LargeListArray / ListViewArray
 
 namespace {
 
@@ -197,7 +199,11 @@ namespace internal {
 template <typename TYPE>
 inline void SetListData(BaseListArray<TYPE>* self, const std::shared_ptr<ArrayData>& data,
                         Type::type expected_type_id) {
-  ARROW_CHECK_EQ(data->buffers.size(), 2);
+  if constexpr (TYPE::type_id == Type::LIST_VIEW) {
+    ARROW_CHECK_EQ(data->buffers.size(), 3);
+  } else {
+    ARROW_CHECK_EQ(data->buffers.size(), 2);
+  }
   ARROW_CHECK_EQ(data->type->id(), expected_type_id);
   ARROW_CHECK_EQ(data->child_data.size(), 1);
 
@@ -206,6 +212,7 @@ inline void SetListData(BaseListArray<TYPE>* self, const std::shared_ptr<ArrayDa
   self->list_type_ = checked_cast<const TYPE*>(data->type.get());
   self->raw_value_offsets_ =
       data->GetValuesSafe<typename TYPE::offset_type>(1, /*offset=*/0);
+  // ListViewArray::SetData takes care of setting raw_value_sizes_.
 
   ARROW_CHECK_EQ(self->list_type_->value_type()->id(), data->child_data[0]->type->id());
   DCHECK(self->list_type_->value_type()->Equals(data->child_data[0]->type));
@@ -217,6 +224,16 @@ inline void SetListData(BaseListArray<TYPE>* self, const std::shared_ptr<ArrayDa
 ListArray::ListArray(std::shared_ptr<ArrayData> data) { SetData(std::move(data)); }
 
 LargeListArray::LargeListArray(const std::shared_ptr<ArrayData>& data) { SetData(data); }
+
+ListViewArray::ListViewArray(const std::shared_ptr<ArrayData>& data) { SetData(data); }
+
+ListViewArray::ListViewArray(const std::shared_ptr<DataType>& type, int64_t length,
+                             const std::vector<std::shared_ptr<Buffer>>& buffers,
+                             const std::shared_ptr<Array>& values, int64_t null_count,
+                             int64_t offset) {
+  SetData(ArrayData::Make(type, length, buffers, /*child_data=*/{values->data()},
+                          null_count, offset));
+}
 
 ListArray::ListArray(std::shared_ptr<DataType> type, int64_t length,
                      std::shared_ptr<Buffer> value_offsets, std::shared_ptr<Array> values,
@@ -248,6 +265,11 @@ LargeListArray::LargeListArray(const std::shared_ptr<DataType>& type, int64_t le
 
 void LargeListArray::SetData(const std::shared_ptr<ArrayData>& data) {
   internal::SetListData(this, data);
+}
+
+void ListViewArray::SetData(const std::shared_ptr<ArrayData>& data) {
+  internal::SetListData(this, data);
+  raw_value_sizes_ = data->GetValuesSafe<ListViewType::offset_type>(2, /*offset=*/0);
 }
 
 Result<std::shared_ptr<ListArray>> ListArray::FromArrays(
