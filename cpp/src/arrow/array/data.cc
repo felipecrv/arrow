@@ -248,6 +248,8 @@ int GetNumBuffers(const DataType& type) {
     case Type::STRING:
     case Type::LARGE_STRING:
     case Type::DENSE_UNION:
+    case Type::LIST_VIEW:
+    case Type::LARGE_LIST_VIEW:
       return 3;
     case Type::EXTENSION:
       // The number of buffers depends on the storage type
