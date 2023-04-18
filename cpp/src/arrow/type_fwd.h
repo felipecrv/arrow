@@ -138,6 +138,8 @@ class LargeListArray;
 class LargeListBuilder;
 struct LargeListScalar;
 
+class ListViewType;
+
 class MapType;
 class MapArray;
 class MapBuilder;
@@ -370,6 +372,9 @@ struct Type {
     /// A list of some logical data type
     LIST,
 
+    /// A list of some logical data type represented by offset and size.
+    LIST_VIEW,
+
     /// Struct of logical types
     STRUCT,
 
@@ -499,6 +504,12 @@ std::shared_ptr<DataType> large_list(const std::shared_ptr<Field>& value_type);
 /// \brief Create a LargeListType instance from its child DataType
 ARROW_EXPORT
 std::shared_ptr<DataType> large_list(const std::shared_ptr<DataType>& value_type);
+
+/// \brief Create a ListViewType instance
+ARROW_EXPORT std::shared_ptr<DataType> list_view(std::shared_ptr<DataType> value_type);
+
+/// \brief Create a ListViewType instance from its child Field type
+ARROW_EXPORT std::shared_ptr<DataType> list_view(std::shared_ptr<Field> value_type);
 
 /// \brief Create a MapType instance from its key and value DataTypes
 ARROW_EXPORT

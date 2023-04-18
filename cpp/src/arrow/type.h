@@ -990,6 +990,37 @@ class ARROW_EXPORT LargeListType : public BaseListType {
   std::string ComputeFingerprint() const override;
 };
 
+/// \brief Type class for array of list views
+class ARROW_EXPORT ListViewType : public BaseListType {
+ public:
+  static constexpr Type::type type_id = Type::LIST_VIEW;
+  using offset_type = int32_t;
+
+  static constexpr const char* type_name() { return "list_view"; }
+
+  // ListView can contain any other logical value type
+  explicit ListViewType(const std::shared_ptr<DataType>& value_type)
+      : ListViewType(std::make_shared<Field>("item", value_type)) {}
+
+  explicit ListViewType(const std::shared_ptr<Field>& value_field)
+      : BaseListType(type_id) {
+    children_ = {value_field};
+  }
+
+  DataTypeLayout layout() const override {
+    return DataTypeLayout({DataTypeLayout::Bitmap(),
+                           DataTypeLayout::FixedWidth(sizeof(offset_type)),
+                           DataTypeLayout::FixedWidth(sizeof(offset_type))});
+  }
+
+  std::string ToString() const override;
+
+  std::string name() const override { return "list_view"; }
+
+ protected:
+  std::string ComputeFingerprint() const override;
+};
+
 /// \brief Concrete type class for map data
 ///
 /// Map data is nested data where each value is a variable number of

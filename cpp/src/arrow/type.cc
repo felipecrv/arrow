@@ -519,6 +519,12 @@ std::string LargeListType::ToString() const {
   return s.str();
 }
 
+std::string ListViewType::ToString() const {
+  std::stringstream s;
+  s << "list_view<" << value_field()->ToString() << ">";
+  return s.str();
+}
+
 MapType::MapType(std::shared_ptr<DataType> key_type, std::shared_ptr<DataType> item_type,
                  bool keys_sorted)
     : MapType(::arrow::field("key", std::move(key_type), false),
@@ -2373,6 +2379,22 @@ std::string LargeListType::ComputeFingerprint() const {
   return "";
 }
 
+std::string ListViewType::ComputeFingerprint() const {
+  const auto& child_fingerprint = value_type()->fingerprint();
+  if (!child_fingerprint.empty()) {
+    std::stringstream ss;
+    ss << TypeIdFingerprint(*this);
+    if (value_field()->nullable()) {
+      ss << 'n';
+    } else {
+      ss << 'N';
+    }
+    ss << '{' << child_fingerprint << '}';
+    return ss.str();
+  }
+  return "";
+}
+
 std::string MapType::ComputeFingerprint() const {
   const auto& key_fingerprint = key_type()->fingerprint();
   const auto& item_fingerprint = item_type()->fingerprint();
@@ -2605,6 +2627,14 @@ std::shared_ptr<DataType> fixed_size_list(const std::shared_ptr<DataType>& value
 std::shared_ptr<DataType> fixed_size_list(const std::shared_ptr<Field>& value_field,
                                           int32_t list_size) {
   return std::make_shared<FixedSizeListType>(value_field, list_size);
+}
+
+std::shared_ptr<DataType> list_view(std::shared_ptr<DataType> value_type) {
+  return std::make_shared<ListViewType>(std::move(value_type));
+}
+
+std::shared_ptr<DataType> list_view(std::shared_ptr<Field> value_field) {
+  return std::make_shared<ListViewType>(std::move(value_field));
 }
 
 std::shared_ptr<DataType> struct_(const std::vector<std::shared_ptr<Field>>& fields) {

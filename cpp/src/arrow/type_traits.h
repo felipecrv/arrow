@@ -716,6 +716,14 @@ template <typename T, typename R = void>
 using enable_if_list_like = enable_if_t<is_list_like_type<T>::value, R>;
 
 template <typename T>
+using is_list_view_like_type =
+    std::integral_constant<bool, is_list_like_type<T>::value ||
+                                     std::is_same<T, ListViewType>::value>;
+
+template <typename T, typename R = void>
+using enable_if_list_view_like = enable_if_t<is_list_view_like_type<T>::value, R>;
+
+template <typename T>
 using is_struct_type = std::is_base_of<StructType, T>;
 
 template <typename T, typename R = void>
@@ -770,6 +778,12 @@ using is_run_end_encoded_type = std::is_base_of<RunEndEncodedType, T>;
 
 template <typename T, typename R = void>
 using enable_if_run_end_encoded = enable_if_t<is_run_end_encoded_type<T>::value, R>;
+
+template <typename T>
+using is_list_view_type = std::is_base_of<ListViewType, T>;
+
+template <typename T, typename R = void>
+using enable_if_list_view = enable_if_t<is_list_view_type<T>::value, R>;
 
 template <typename T>
 using is_dictionary_type = std::is_base_of<DictionaryType, T>;
@@ -1196,6 +1210,14 @@ constexpr bool is_list_like(Type::type type_id) {
   return false;
 }
 
+/// \brief Check for a list-view or list-like type
+///
+/// \param[in] type_id the type-id to check
+/// \return whether type-id is a list-view or list-like type
+constexpr bool is_list_view_like(Type::type type_id) {
+  return is_list_like(type_id) || type_id == Type::LIST_VIEW;
+}
+
 /// \brief Check for a nested type
 ///
 /// \param[in] type_id the type-id to check
@@ -1204,6 +1226,7 @@ constexpr bool is_nested(Type::type type_id) {
   switch (type_id) {
     case Type::LIST:
     case Type::LARGE_LIST:
+    case Type::LIST_VIEW:
     case Type::FIXED_SIZE_LIST:
     case Type::MAP:
     case Type::STRUCT:
@@ -1491,6 +1514,16 @@ static inline bool is_fixed_width(const DataType& type) {
 ///
 /// Convenience for checking using the type's id
 static inline bool is_list_like(const DataType& type) { return is_list_like(type.id()); }
+
+/// \brief Check for a list-view or list-like type
+///
+/// \param[in] type the type to check
+/// \return whether type is a list-view or list-like type
+///
+/// Convenience for checking using the type's id
+static inline bool is_list_view_like(const DataType& type) {
+  return is_list_view_like(type.id());
+}
 
 /// \brief Check for a nested type
 ///

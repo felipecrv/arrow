@@ -1117,6 +1117,26 @@ TEST(TestLargeListType, Basics) {
   ASSERT_EQ("large_list<item: large_list<item: string>>", lt2.ToString());
 }
 
+TEST(TestListViewType, Basics) {
+  std::shared_ptr<DataType> vt = std::make_shared<UInt8Type>();
+
+  ListViewType list_view_type(vt);
+  ASSERT_EQ(list_view_type.id(), Type::LIST_VIEW);
+
+  ASSERT_EQ("list_view", list_view_type.name());
+  ASSERT_EQ("list_view<item: uint8>", list_view_type.ToString());
+
+  ASSERT_EQ(list_view_type.value_type()->id(), vt->id());
+  ASSERT_EQ(list_view_type.value_type()->id(), vt->id());
+
+  std::shared_ptr<DataType> st = std::make_shared<StringType>();
+  std::shared_ptr<DataType> lt = std::make_shared<ListViewType>(st);
+  ASSERT_EQ("list_view<item: string>", lt->ToString());
+
+  ListViewType lt2(lt);
+  ASSERT_EQ("list_view<item: list_view<item: string>>", lt2.ToString());
+}
+
 TEST(TestMapType, Basics) {
   auto md = key_value_metadata({"foo"}, {"foo value"});
 
@@ -1393,6 +1413,33 @@ TEST(TestListType, Equals) {
   ASSERT_FALSE(list_type.Equals(list_type_named, /*check_metadata=*/true));
 }
 
+TEST(TestListViewType, Equals) {
+  auto t1 = list_view(utf8());
+  auto t2 = list_view(utf8());
+  auto t3 = list_view(binary());
+  auto t4 = list_view(field("item", utf8(), /*nullable=*/false));
+  // TODO(felipecrv): Add large_list_view
+  // auto tl1 = large_list_view(binary());
+  // auto tl2 = large_list_view(binary());
+  // auto tl3 = large_list_view(float64());
+
+  AssertTypeEqual(*t1, *t2);
+  AssertTypeNotEqual(*t1, *t3);
+  AssertTypeNotEqual(*t1, *t4);
+  // AssertTypeNotEqual(*t3, *tl1);
+  // AssertTypeEqual(*tl1, *tl2);
+  // AssertTypeNotEqual(*tl2, *tl3);
+
+  std::shared_ptr<DataType> vt = std::make_shared<UInt8Type>();
+  std::shared_ptr<Field> inner_field = std::make_shared<Field>("non_default_name", vt);
+
+  ListViewType list_view_type(vt);
+  ListViewType list_view_type_named(inner_field);
+
+  AssertTypeEqual(list_view_type, list_view_type_named);
+  ASSERT_FALSE(list_view_type.Equals(list_view_type_named, /*check_metadata=*/true));
+}
+
 TEST(TestListType, Metadata) {
   auto md1 = key_value_metadata({"foo", "bar"}, {"foo value", "bar value"});
   auto md2 = key_value_metadata({"foo", "bar"}, {"foo value", "bar value"});
@@ -1409,6 +1456,36 @@ TEST(TestListType, Metadata) {
   auto t3 = list(f3);
   auto t4 = list(f4);
   auto t5 = list(f5);
+
+  AssertTypeEqual(*t1, *t2);
+  AssertTypeEqual(*t1, *t2, /*check_metadata =*/false);
+
+  AssertTypeEqual(*t1, *t3);
+  AssertTypeNotEqual(*t1, *t3, /*check_metadata =*/true);
+
+  AssertTypeEqual(*t1, *t4);
+  AssertTypeNotEqual(*t1, *t4, /*check_metadata =*/true);
+
+  AssertTypeNotEqual(*t1, *t5);
+  AssertTypeNotEqual(*t1, *t5, /*check_metadata =*/true);
+}
+
+TEST(TestListViewType, Metadata) {
+  auto md1 = key_value_metadata({"foo", "bar"}, {"foo value", "bar value"});
+  auto md2 = key_value_metadata({"foo", "bar"}, {"foo value", "bar value"});
+  auto md3 = key_value_metadata({"foo"}, {"foo value"});
+
+  auto f1 = field("item", utf8(), /*nullable =*/true, md1);
+  auto f2 = field("item", utf8(), /*nullable =*/true, md2);
+  auto f3 = field("item", utf8(), /*nullable =*/true, md3);
+  auto f4 = field("item", utf8());
+  auto f5 = field("item", utf8(), /*nullable =*/false, md1);
+
+  auto t1 = list_view(f1);
+  auto t2 = list_view(f2);
+  auto t3 = list_view(f3);
+  auto t4 = list_view(f4);
+  auto t5 = list_view(f5);
 
   AssertTypeEqual(*t1, *t2);
   AssertTypeEqual(*t1, *t2, /*check_metadata =*/false);
@@ -1853,6 +1930,7 @@ TEST(TypesTest, TestMembership) {
   TEST_PREDICATE(all_types, is_fixed_size_binary);
   TEST_PREDICATE(all_types, is_fixed_width);
   TEST_PREDICATE(all_types, is_list_like);
+  TEST_PREDICATE(all_types, is_list_view_like);
   TEST_PREDICATE(all_types, is_nested);
   TEST_PREDICATE(all_types, is_union);
 }

@@ -67,8 +67,9 @@ int RequiredValueAlignmentForBuffer(Type::type type_id, int buffer_index) {
     case Type::BINARY:  // Offsets may be cast to int32_t*
     case Type::DATE32:
     case Type::TIME32:
-    case Type::LIST:  // Offsets may be cast to int32_t*, data is in child array
-    case Type::MAP:   // This is a list array
+    case Type::LIST:       // Offsets may be cast to int32_t*, data is in child array
+    case Type::LIST_VIEW:  // Same as LIST
+    case Type::MAP:        // This is a list array
     case Type::INTERVAL_MONTHS:    // Stored as int32_t*
     case Type::INTERVAL_DAY_TIME:  // Stored as two contiguous 32-bit integers
       return 4;
