@@ -831,6 +831,7 @@ class PathBuilder {
   // Types not yet supported in Parquet.
   NOT_IMPLEMENTED_VISIT(Union)
   NOT_IMPLEMENTED_VISIT(RunEndEncoded);
+  NOT_IMPLEMENTED_VISIT(ListView);
 
 #undef NOT_IMPLEMENTED_VISIT
   std::vector<PathInfo>& paths() { return paths_; }
