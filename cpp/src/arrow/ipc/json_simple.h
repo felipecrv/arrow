@@ -58,6 +58,11 @@ Status DictArrayFromJSON(const std::shared_ptr<DataType>&, std::string_view indi
                          std::string_view dictionary_json, std::shared_ptr<Array>* out);
 
 ARROW_EXPORT
+Status ListViewArrayFromJSON(const std::shared_ptr<DataType>& type,
+                             std::string_view offsets_json, std::string_view sizes_json,
+                             std::string_view values_json, std::shared_ptr<Array>* out);
+
+ARROW_EXPORT
 Status ScalarFromJSON(const std::shared_ptr<DataType>&, std::string_view json,
                       std::shared_ptr<Scalar>* out);
 

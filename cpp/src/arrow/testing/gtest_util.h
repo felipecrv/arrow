@@ -321,6 +321,12 @@ std::shared_ptr<Array> DictArrayFromJSON(const std::shared_ptr<DataType>& type,
                                          std::string_view dictionary_json);
 
 ARROW_TESTING_EXPORT
+std::shared_ptr<Array> ListViewArrayFromJSON(const std::shared_ptr<DataType>& type,
+                                             std::string_view offsets_json,
+                                             std::string_view sizes_json,
+                                             std::string_view values_json);
+
+ARROW_TESTING_EXPORT
 std::shared_ptr<RecordBatch> RecordBatchFromJSON(const std::shared_ptr<Schema>&,
                                                  std::string_view);
 

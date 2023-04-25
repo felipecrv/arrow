@@ -26,10 +26,12 @@
 #include "arrow/array/builder_binary.h"
 #include "arrow/array/builder_decimal.h"
 #include "arrow/array/builder_dict.h"
+#include "arrow/array/builder_list_view.h"
 #include "arrow/array/builder_nested.h"
 #include "arrow/array/builder_primitive.h"
 #include "arrow/array/builder_time.h"
 #include "arrow/array/builder_union.h"
+#include "arrow/array/list_view.h"
 #include "arrow/chunked_array.h"
 #include "arrow/ipc/json_simple.h"
 #include "arrow/scalar.h"
@@ -898,6 +900,7 @@ Status GetConverter(const std::shared_ptr<DataType>& type,
     SIMPLE_CONVERTER_CASE(Type::DOUBLE, FloatConverter<DoubleType>)
     SIMPLE_CONVERTER_CASE(Type::LIST, ListConverter<ListType>)
     SIMPLE_CONVERTER_CASE(Type::LARGE_LIST, ListConverter<LargeListType>)
+    SIMPLE_CONVERTER_CASE(Type::LIST_VIEW, ListConverter<ListViewType>)
     SIMPLE_CONVERTER_CASE(Type::MAP, MapConverter)
     SIMPLE_CONVERTER_CASE(Type::FIXED_SIZE_LIST, FixedSizeListConverter)
     SIMPLE_CONVERTER_CASE(Type::STRUCT, StructConverter)
@@ -983,6 +986,23 @@ Status DictArrayFromJSON(const std::shared_ptr<DataType>& type,
                         ArrayFromJSON(dictionary_type.value_type(), dictionary_json));
 
   return DictionaryArray::FromArrays(type, std::move(indices), std::move(dictionary))
+      .Value(out);
+}
+
+Status ListViewArrayFromJSON(const std::shared_ptr<DataType>& type,
+                             std::string_view offsets_json, std::string_view sizes_json,
+                             std::string_view values_json, std::shared_ptr<Array>* out) {
+  if (type->id() != Type::LIST_VIEW) {
+    return Status::TypeError("ListViewArrayFromJSON requires list-view type, got ",
+                             *type);
+  }
+  const auto& list_view_type = checked_cast<const ListViewType&>(*type);
+  ARROW_ASSIGN_OR_RAISE(auto offsets, ArrayFromJSON(int32(), offsets_json));
+  ARROW_ASSIGN_OR_RAISE(auto sizes, ArrayFromJSON(int32(), sizes_json));
+  ARROW_ASSIGN_OR_RAISE(auto values,
+                        ArrayFromJSON(list_view_type.value_type(), values_json));
+  return ListViewArray::FromArrays(type, std::move(offsets), std::move(sizes),
+                                   std::move(values))
       .Value(out);
 }
 
