@@ -110,6 +110,8 @@ struct ValueComparatorVisitor {
     return Status::OK();
   }
 
+  Status Visit(const ListViewType&) { return Status::NotImplemented("list-view type"); }
+
   Status Visit(const NullType&) { return Status::NotImplemented("null type"); }
 
   Status Visit(const ExtensionType&) { return Status::NotImplemented("extension type"); }
@@ -386,7 +388,8 @@ Result<std::shared_ptr<StructArray>> Diff(const Array& base, const Array& target
     return Diff(*base_storage, *target_storage, pool);
   } else if (base.type()->id() == Type::DICTIONARY) {
     return Status::NotImplemented("diffing arrays of type ", *base.type());
-  } else if (base.type()->id() == Type::RUN_END_ENCODED) {
+  } else if (base.type()->id() == Type::RUN_END_ENCODED ||
+             base.type()->id() == Type::LIST_VIEW) {
     return Status::NotImplemented("diffing arrays of type ", *base.type());
   } else {
     return QuadraticSpaceMyersDiff(base, target, pool).Diff();
@@ -528,6 +531,10 @@ class MakeFormatterImpl {
     ARROW_ASSIGN_OR_RAISE(auto values_formatter, MakeFormatter(*t.value_type()));
     impl_ = ListImpl(std::move(values_formatter));
     return Status::OK();
+  }
+
+  Status Visit(const ListViewType& t) {
+    return Status::NotImplemented("formatting diffs between arrays of type ", t);
   }
 
   // TODO(bkietz) format maps better

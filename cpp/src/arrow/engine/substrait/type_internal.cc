@@ -310,6 +310,8 @@ struct DataTypeToProtoImpl {
     return Status::OK();
   }
 
+  Status Visit(const ListViewType& t) { return NotImplemented(t); }
+
   Status Visit(const StructType& t) {
     auto types = SetWithThen(&substrait::Type::set_allocated_struct_)->mutable_types();
 

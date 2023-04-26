@@ -288,6 +288,10 @@ class RangeDataEqualsImpl {
 
   Status Visit(const LargeListType& type) { return CompareList(type); }
 
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("comparing ListViewType");
+  }
+
   Status Visit(const FixedSizeListType& type) {
     const auto list_size = type.list_size();
     const ArrayData& left_data = *left_.child_data[0];
@@ -687,6 +691,10 @@ class TypeEqualsVisitor {
     return Status::OK();
   }
 
+  Status Visit(const ListViewType& left) {
+    return Status::NotImplemented("list-view type comparison");
+  }
+
   template <typename T>
   enable_if_t<is_struct_type<T>::value, Status> Visit(const T& left) {
     return VisitChildren(left);
@@ -831,6 +839,10 @@ class ScalarEqualsVisitor {
     const auto& right = checked_cast<const LargeListScalar&>(right_);
     result_ = ArrayEquals(*left.value, *right.value, options_, floating_approximate_);
     return Status::OK();
+  }
+
+  Status Visit(const ListViewScalar& left) {
+    return Status::NotImplemented("list-view comparison");
   }
 
   Status Visit(const MapScalar& left) {

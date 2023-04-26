@@ -275,6 +275,9 @@ class ArrayDataEndianSwapper {
     RETURN_NOT_OK(SwapOffsets<int64_t>(1));
     return Status::OK();
   }
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("swapping endianness of list-view array");
+  }
 
   Status Visit(const DictionaryType& type) {
     // dictionary was already swapped in ReadDictionary() in ipc/reader.cc
@@ -498,6 +501,10 @@ class NullArrayFactory {
     return Status::OK();
   }
 
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("construction of all-null ", type);
+  }
+
   Status Visit(const FixedSizeListType& type) {
     ARROW_ASSIGN_OR_RAISE(out_->child_data[0],
                           CreateChild(type, 0, length_ * type.list_size()));
@@ -660,6 +667,10 @@ class RepeatedArrayFactory {
     out_ =
         std::make_shared<ArrayType>(scalar_.type, length_, offsets_buffer, value_array);
     return Status::OK();
+  }
+
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("construction from scalar of type ", *scalar_.type);
   }
 
   Status Visit(const FixedSizeListType& type) {

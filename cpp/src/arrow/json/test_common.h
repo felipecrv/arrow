@@ -129,6 +129,8 @@ struct GenerateImpl {
     return OK(writer.EndArray(size));
   }
 
+  Status Visit(const ListViewType& t) { return NotImplemented(t); }
+
   Status Visit(const StructType& t) { return Generate(t.fields(), e, &writer, options); }
 
   Status Visit(const DayTimeIntervalType& t) { return NotImplemented(t); }

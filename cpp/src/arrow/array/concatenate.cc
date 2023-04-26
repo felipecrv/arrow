@@ -247,6 +247,10 @@ class ConcatenateImpl {
     return ConcatenateImpl(child_data, pool_).Concatenate(&out_->child_data[0]);
   }
 
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("concatenation of ", type);
+  }
+
   Status Visit(const FixedSizeListType& fixed_size_list) {
     ARROW_ASSIGN_OR_RAISE(auto child_data, ChildData(0, fixed_size_list.list_size()));
     return ConcatenateImpl(child_data, pool_).Concatenate(&out_->child_data[0]);
