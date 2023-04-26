@@ -415,6 +415,12 @@ class SchemaWriter {
     return Status::OK();
   }
 
+  Status Visit(const ListViewType& type) { return Status::NotImplemented(type.name()); }
+
+  Status Visit(const LargeListViewType& type) {
+    return Status::NotImplemented(type.name());
+  }
+
   Status Visit(const MapType& type) {
     WriteName("map", type);
     return Status::OK();
@@ -714,6 +720,14 @@ class ArrayWriter {
     WriteValidityField(array);
     WriteIntegerField("OFFSET", array.raw_value_offsets(), array.length() + 1);
     return WriteChildren(array.type()->fields(), {array.values()});
+  }
+
+  Status Visit(const ListViewArray& array) {
+    return Status::NotImplemented("list-view array in JSON");
+  }
+
+  Status Visit(const LargeListViewArray& array) {
+    return Status::NotImplemented("large list-view array in JSON");
   }
 
   Status Visit(const FixedSizeListArray& array) {
@@ -1525,6 +1539,14 @@ class ArrayReader {
   template <typename T>
   enable_if_var_size_list<T, Status> Visit(const T& type) {
     return CreateList<T>(type_);
+  }
+
+  Status Visit(const ListViewType& type) {
+    return Status::NotImplemented("list-view in JSON");
+  }
+
+  Status Visit(const LargeListViewType& type) {
+    return Status::NotImplemented("large list-view in JSON");
   }
 
   Status Visit(const MapType& type) {
