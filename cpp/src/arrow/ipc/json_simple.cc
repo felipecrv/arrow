@@ -555,8 +555,8 @@ class ListConverter final : public ConcreteConverter<ListConverter<TYPE>> {
     if (json_obj.IsNull()) {
       return this->AppendNull();
     }
-    RETURN_NOT_OK(builder_->Append());
     // Extend the child converter with this JSON array
+    RETURN_NOT_OK(builder_->Append(true, json_obj.Size()));
     return child_converter_->AppendValues(json_obj);
   }
 
