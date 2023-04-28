@@ -23,6 +23,7 @@
 
 #include "arrow/array/array_base.h"
 #include "arrow/array/builder_dict.h"
+#include "arrow/array/builder_list_view.h"
 #include "arrow/array/data.h"
 #include "arrow/array/util.h"
 #include "arrow/buffer.h"
@@ -152,7 +153,7 @@ struct AppendScalarImpl {
   }
 
   template <typename T>
-  enable_if_list_like<T, Status> Visit(const T&) {
+  enable_if_list_view_like<T, Status> Visit(const T&) {
     auto builder = checked_cast<typename TypeTraits<T>::BuilderType*>(builder_);
     int64_t num_children = 0;
     for (auto it = scalars_begin_; it != scalars_end_; ++it) {
@@ -164,8 +165,12 @@ struct AppendScalarImpl {
     for (int64_t i = 0; i < n_repeats_; i++) {
       for (auto it = scalars_begin_; it != scalars_end_; ++it) {
         if (it->is_valid) {
-          RETURN_NOT_OK(builder->Append());
           const Array& list = *checked_cast<const BaseListScalar&>(*it).value;
+          if constexpr (T::type_id != Type::MAP && T::type_id != Type::FIXED_SIZE_LIST) {
+            RETURN_NOT_OK(builder->Append(true, list.length()));
+          } else {
+            RETURN_NOT_OK(builder->Append());
+          }
           for (int64_t i = 0; i < list.length(); i++) {
             ARROW_ASSIGN_OR_RAISE(auto scalar, list.GetScalar(i));
             RETURN_NOT_OK(builder->value_builder()->AppendScalar(*scalar));
@@ -173,6 +178,30 @@ struct AppendScalarImpl {
         } else {
           RETURN_NOT_OK(builder_->AppendNull());
         }
+      }
+    }
+    return Status::OK();
+  }
+
+  Status Visit(const ListViewType&) {
+    auto builder = checked_cast<ListViewBuilder*>(builder_);
+
+    int64_t additional_capacity_for_values = 0;
+    for (auto it = scalars_begin_; it != scalars_end_; ++it) {
+      if (it->is_valid) {
+        const auto& list_view_scalar = checked_cast<const ListViewScalar&>(*it);
+        additional_capacity_for_values += list_view_scalar.value->length();
+      }
+    }
+    // NOTE: a more memory efficient implementation is possible if we add the
+    // flattened values to the nested values builder directly and then repeat
+    // the offsets and sizes n_repeats_ times.
+    RETURN_NOT_OK(builder->Reserve(n_repeats_ * (scalars_end_ - scalars_begin_)));
+    RETURN_NOT_OK(
+        builder->value_builder()->Reserve(n_repeats_ * additional_capacity_for_values));
+    for (int64_t i = 0; i < n_repeats_; i++) {
+      for (auto it = scalars_begin_; it != scalars_end_; ++it) {
+        RETURN_NOT_OK(builder->AppendScalar(*it, 1));
       }
     }
     return Status::OK();

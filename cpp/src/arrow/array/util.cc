@@ -29,6 +29,7 @@
 
 #include "arrow/array.h"
 #include "arrow/array/builder_base.h"
+#include "arrow/array/builder_list_view.h"
 #include "arrow/array/concatenate.h"
 #include "arrow/buffer.h"
 #include "arrow/buffer_builder.h"
@@ -369,6 +370,11 @@ class NullArrayFactory {
       return MaxOf(sizeof(typename T::offset_type) * (length_ + 1));
     }
 
+    Status Visit(const ListViewType& type) {
+      buffer_length_ = length_ * sizeof(ListViewType::offset_type);
+      return Status::OK();
+    }
+
     template <typename T>
     enable_if_base_binary<T, Status> Visit(const T&) {
       // values buffer may be empty, but there must be at least one offset of 0
@@ -495,14 +501,10 @@ class NullArrayFactory {
   }
 
   template <typename T>
-  enable_if_var_size_list<T, Status> Visit(const T& type) {
-    out_->buffers.resize(2, buffer_);
+  enable_if_list_view_like<T, Status> Visit(const T& type) {
+    out_->buffers.resize(T::type_id == Type::LIST_VIEW ? 3 : 2, buffer_);
     ARROW_ASSIGN_OR_RAISE(out_->child_data[0], CreateChild(type, 0, /*length=*/0));
     return Status::OK();
-  }
-
-  Status Visit(const ListViewType& type) {
-    return Status::NotImplemented("construction of all-null ", type);
   }
 
   Status Visit(const FixedSizeListType& type) {
@@ -669,8 +671,30 @@ class RepeatedArrayFactory {
     return Status::OK();
   }
 
+  // TODO(felipecrv): review how this can look more like the implementation above
   Status Visit(const ListViewType& type) {
-    return Status::NotImplemented("construction from scalar of type ", *scalar_.type);
+    if (!scalar_.is_valid) {
+      ARROW_ASSIGN_OR_RAISE(out_, MakeArrayOfNull(scalar_.type, length_, pool_));
+      return Status::OK();
+    }
+    const auto& list_view_scalar = checked_cast<const ListViewScalar&>(scalar_);
+    ARROW_ASSIGN_OR_RAISE(auto offsets, AllocateBuffer(length_ * sizeof(int32_t), pool_));
+    ARROW_ASSIGN_OR_RAISE(auto sizes, AllocateBuffer(length_ * sizeof(int32_t), pool_));
+    memset(offsets->mutable_data(), 0, length_ * sizeof(int32_t));
+    auto* sizes_data = reinterpret_cast<int32_t*>(sizes->mutable_data());
+    const int64_t size = list_view_scalar.value->length();
+    if (size > std::numeric_limits<int32_t>::max()) {
+      return Status::Invalid("ListView scalar size ", size, " is too large");
+    }
+    std::fill(sizes_data, sizes_data + length_, static_cast<int32_t>(size));
+    auto buffers = std::vector<std::shared_ptr<Buffer>>{
+        NULLPTR,
+        std::move(offsets),
+        std::move(sizes),
+    };
+    out_ = std::make_shared<ListViewArray>(scalar_.type, length_, buffers,
+                                           list_view_scalar.value, 0, 0);
+    return Status::OK();
   }
 
   Status Visit(const FixedSizeListType& type) {

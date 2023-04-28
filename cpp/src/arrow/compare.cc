@@ -838,7 +838,9 @@ class ScalarEqualsVisitor {
   }
 
   Status Visit(const ListViewScalar& left) {
-    return Status::NotImplemented("list-view comparison");
+    const auto& right = checked_cast<const ListViewScalar&>(right_);
+    result_ = ArrayEquals(*left.value, *right.value, options_, floating_approximate_);
+    return Status::OK();
   }
 
   Status Visit(const MapScalar& left) {

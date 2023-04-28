@@ -399,6 +399,7 @@ TEST_F(TestArray, TestMakeArrayOfNull) {
       dense_union(union_fields2, union_type_codes),
       smallint(),  // extension type
       list_extension_type(), // nested extension type
+      list_view(utf8()),
       // clang-format on
   };
 

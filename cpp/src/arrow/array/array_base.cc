@@ -28,6 +28,7 @@
 #include "arrow/array/array_dict.h"
 #include "arrow/array/array_nested.h"
 #include "arrow/array/array_primitive.h"
+#include "arrow/array/list_view.h"
 #include "arrow/array/util.h"
 #include "arrow/array/validate.h"
 #include "arrow/buffer.h"
