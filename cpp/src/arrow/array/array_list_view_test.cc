@@ -19,6 +19,7 @@
 
 #include "arrow/array/list_view.h"
 #include "arrow/array/util.h"
+#include "arrow/pretty_print.h"
 #include "arrow/testing/gtest_util.h"
 #include "arrow/type_fwd.h"
 #include "arrow/util/checked_cast.h"
@@ -99,6 +100,74 @@ TEST_F(TestListViewArray, FromOffsetsAndSizes) {
       Invalid, "Invalid: offsets and sizes must have the same length",
       ListViewArray::FromArrays(list_view(int32()), Offsets("[0, 0, 1]"),
                                 Sizes("[2, 1, 1, null]"), int32_values));
+}
+
+TEST_F(TestListViewArray, Printing) {
+  ASSERT_OK_AND_ASSIGN(
+      auto int_list_view_array,
+      ListViewArray::FromArrays(list_view(int32()), Offsets("[0, 0, 1, 2]"),
+                                Sizes("[2, 1, 1, 1]"), int32_values));
+  std::stringstream ss;
+  ASSERT_OK(PrettyPrint(*int_list_view_array, {}, &ss));
+  ASSERT_EQ(ss.str(),
+            "[\n"
+            "  [\n"
+            "    1,\n"
+            "    20\n"
+            "  ],\n"
+            "  [\n"
+            "    1\n"
+            "  ],\n"
+            "  [\n"
+            "    20\n"
+            "  ],\n"
+            "  [\n"
+            "    3\n"
+            "  ]\n"
+            "]");
+
+  ASSERT_OK_AND_ASSIGN(
+      auto string_list_view_array,
+      ListViewArray::FromArrays(list_view(utf8()), Offsets("[0, 0, 1, 2]"),
+                                Sizes("[2, 1, 1, 1]"), string_values));
+  ss = {};
+  ASSERT_OK(PrettyPrint(*string_list_view_array, {}, &ss));
+  ASSERT_EQ(ss.str(),
+            "[\n"
+            "  [\n"
+            "    \"Hello\",\n"
+            "    \"World\"\n"
+            "  ],\n"
+            "  [\n"
+            "    \"Hello\"\n"
+            "  ],\n"
+            "  [\n"
+            "    \"World\"\n"
+            "  ],\n"
+            "  [\n"
+            "    null\n"
+            "  ]\n"
+            "]");
+
+  auto sliced_array = string_list_view_array->Slice(1, 2);
+  ss = {};
+  ASSERT_OK(PrettyPrint(*sliced_array, {}, &ss));
+  ASSERT_EQ(ss.str(),
+            "[\n"
+            "  [\n"
+            "    \"Hello\"\n"
+            "  ],\n"
+            "  [\n"
+            "    \"World\"\n"
+            "  ]\n"
+            "]");
+
+  ASSERT_OK_AND_ASSIGN(auto empty_array,
+                       ListViewArray::FromArrays(list_view(int16()), Offsets("[]"),
+                                                 Sizes("[]"), int16_values));
+  ss = {};
+  ASSERT_OK(PrettyPrint(*empty_array, {}, &ss));
+  ASSERT_EQ(ss.str(), "[]");
 }
 
 }  // namespace arrow

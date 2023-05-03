@@ -252,7 +252,7 @@ class ArrayPrinter : public PrettyPrinter {
   }
 
   template <typename ArrayType, typename T = typename ArrayType::TypeClass>
-  enable_if_list_like<T, Status> WriteDataValues(const ArrayType& array) {
+  enable_if_list_view_like<T, Status> WriteDataValues(const ArrayType& array) {
     const auto values = array.values();
     const auto child_options = ChildOptions();
     ArrayPrinter values_printer(child_options, sink_);
@@ -267,10 +267,6 @@ class ArrayPrinter : public PrettyPrinter {
         },
         /*indent_non_null_values=*/false,
         /*is_container=*/true);
-  }
-
-  Status WriteDataValues(const ListViewArray& array) {
-    return Status::NotImplemented("writing data values of a list-view array");
   }
 
   Status WriteDataValues(const MapArray& array) {
@@ -308,7 +304,8 @@ class ArrayPrinter : public PrettyPrinter {
                   std::is_base_of<LargeListArray, T>::value ||
                   std::is_base_of<ListViewArray, T>::value ||
                   std::is_base_of<MapArray, T>::value ||
-                  std::is_base_of<FixedSizeListArray, T>::value,
+                  std::is_base_of<FixedSizeListArray, T>::value ||
+                  std::is_base_of<ListViewArray, T>::value,
               Status>
   Visit(const T& array) {
     Status st = array.Validate();
