@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "arrow/array/data.h"
@@ -30,6 +31,19 @@ namespace list_view_util {
 
 /// \brief Get the child array holding the values from an ListView array
 inline const ArraySpan& ValuesArray(const ArraySpan& span) { return span.child_data[0]; }
+
+namespace internal {
+
+/// \brief Calculate the smallest continuous range of values used by the input
+///
+/// List-view offsets are not necessarily sorted, so a full scan is required
+/// to determine the used range.
+///
+/// \param list_view_array The array of type LIST_VIEW
+/// \return A pair of (offset, length) describing the range
+std::pair<int64_t, int64_t> RangeOfValuesUsed(const ArraySpan& list_view_array);
+
+}  // namespace internal
 
 class ListViewArrayIterator {
  public:
