@@ -41,8 +41,10 @@
 #include "arrow/util/checked_cast.h"
 #include "arrow/util/int_util.h"
 #include "arrow/util/int_util_overflow.h"
+#include "arrow/util/list_view_util.h"
 #include "arrow/util/logging.h"
 #include "arrow/util/ree_util.h"
+#include "arrow/visit_data_inline.h"
 #include "arrow/visit_type_inline.h"
 
 namespace arrow {
@@ -174,6 +176,50 @@ Status PutOffsets(const Buffer& src, Offset first_offset, Offset* dst,
   return Status::OK();
 }
 
+void PutListViewOffsets(const Buffer& src, ListViewType::offset_type displacement,
+                        ListViewType::offset_type* dst);
+
+// Concatenate buffers holding list-view offsets into a single buffer of offsets
+Status ConcatenateListViewOffsets(const BufferVector& buffers,
+                                  const std::vector<Range>& value_ranges,
+                                  MemoryPool* pool, std::shared_ptr<Buffer>* out) {
+  using Offset = typename ListViewType::offset_type;
+
+  const int64_t out_size = SumBufferSizes(buffers);
+  ARROW_ASSIGN_OR_RAISE(*out, AllocateBuffer(out_size, pool));
+  auto* out_data = reinterpret_cast<Offset*>((*out)->mutable_data());
+
+  // memcpy the first offsets buffer
+  memcpy(out_data, buffers[0]->data(), buffers[0]->size());
+  // Copy the rest of the offset buffers with the values appropriately displaced
+  int64_t elements_length = buffers[0]->size() / sizeof(Offset);
+  auto displacement = static_cast<Offset>(value_ranges[0].length);
+  for (size_t i = 1; i < buffers.size(); ++i) {
+    PutListViewOffsets(/*src=*/*buffers[i], displacement,
+                       /*dst=*/out_data + elements_length);
+    elements_length += buffers[i]->size() / sizeof(Offset);
+    displacement += static_cast<Offset>(value_ranges[i].length);
+  }
+
+  return Status::OK();
+}
+
+void PutListViewOffsets(const Buffer& src, ListViewType::offset_type displacement,
+                        ListViewType::offset_type* dst) {
+  using Offset = typename ListViewType::offset_type;
+  if (src.size() == 0) {
+    return;
+  }
+  auto src_begin = reinterpret_cast<const Offset*>(src.data());
+  auto src_end = reinterpret_cast<const Offset*>(src.data() + src.size());
+  // NOTE: Concatenate can be called during IPC reads to append delta dictionaries.
+  // Avoid UB on non-validated input by doing the addition in the unsigned domain.
+  // (the result can later be validated using Array::ValidateFull)
+  std::transform(src_begin, src_end, dst, [displacement](Offset offset) {
+    return SafeSignedAdd(offset, displacement);
+  });
+}
+
 class ConcatenateImpl {
  public:
   ConcatenateImpl(const ArrayDataVector& in, MemoryPool* pool)
@@ -253,7 +299,34 @@ class ConcatenateImpl {
   }
 
   Status Visit(const ListViewType& type) {
-    return Status::NotImplemented("concatenation of ", type);
+    out_->buffers.resize(3);
+    out_->child_data.resize(1);
+
+    // Calculate the ranges of values that each list-view array uses
+    std::vector<Range> value_ranges;
+    value_ranges.reserve(in_.size());
+    for (const auto& input : in_) {
+      ArraySpan input_span(*input);
+      Range range;
+      std::tie(range.offset, range.length) =
+          list_view_util::internal::RangeOfValuesUsed(input_span);
+      value_ranges.push_back(range);
+    }
+
+    // Concatenate the values
+    ARROW_ASSIGN_OR_RAISE(ArrayDataVector value_data, ChildData(0, value_ranges));
+    RETURN_NOT_OK(ConcatenateImpl(value_data, pool_).Concatenate(&out_->child_data[0]));
+    out_->child_data[0]->type = type.value_type();
+
+    // Concatenate the offsets
+    ARROW_ASSIGN_OR_RAISE(auto offset_buffers,
+                          Buffers(1, sizeof(ListViewType::offset_type)));
+    RETURN_NOT_OK(ConcatenateListViewOffsets(offset_buffers, value_ranges, pool_,
+                                             &out_->buffers[1]));
+
+    // Concatenate the sizes
+    ARROW_ASSIGN_OR_RAISE(auto size_buffers, Buffers(2, sizeof(int32_t)));
+    return ConcatenateBuffers(size_buffers, pool_).Value(&out_->buffers[2]);
   }
 
   Status Visit(const FixedSizeListType& fixed_size_list) {
