@@ -2500,8 +2500,12 @@ void RegisterVectorSelection(FunctionRegistry* registry) {
       {InputType(Type::STRUCT), InputType(Type::BOOL), StructFilter},
       // TODO: Reuse ListType kernel for MAP
       {InputType(Type::MAP), InputType(Type::BOOL), FilterExec<ListImpl<MapType>>},
+      // REE(*) x REE(Boolean) filtering
       {InputType(match::RunEndEncoded(match::Primitive())),
        InputType(match::RunEndEncoded(match::SameTypeId(Type::BOOL))), REExREEFilterExec},
+      // REE(*) x Boolean filtering
+      {InputType(match::RunEndEncoded(match::Primitive())), InputType(Type::BOOL),
+       REExPlainFilterExec},
   };
 
   VectorKernel filter_base;
