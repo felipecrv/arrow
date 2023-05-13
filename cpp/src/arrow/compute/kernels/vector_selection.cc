@@ -2506,6 +2506,10 @@ void RegisterVectorSelection(FunctionRegistry* registry) {
       // REE(*) x Boolean filtering
       {InputType(match::RunEndEncoded(match::Primitive())), InputType(Type::BOOL),
        REExPlainFilterExec},
+      // * x REE(Boolean) filtering
+      {InputType(match::Primitive()),
+       InputType(match::RunEndEncoded(match::SameTypeId(Type::BOOL))),
+       PlainxREEFilterExec},
   };
 
   VectorKernel filter_base;
