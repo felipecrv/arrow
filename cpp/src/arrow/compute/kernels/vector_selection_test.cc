@@ -175,10 +175,12 @@ std::shared_ptr<Array> CoalesceNullToFalse(std::shared_ptr<Array> filter) {
                                                  data.offset);
   EXPECT_OK_AND_ASSIGN(Datum out_datum, And(is_true, is_valid));
   if (is_ree) {
-    const auto& ree_filter = dynamic_cast<const RunEndEncodedArray&>(*filter);
-    return RunEndEncodedArray::Make(ree_filter.length(), ree_filter.run_ends(),
-                                    out_datum.make_array(), ree_filter.offset())
-        .ValueOrDie();
+    const auto& ree_filter = checked_cast<const RunEndEncodedArray&>(*filter);
+    EXPECT_OK_AND_ASSIGN(
+        auto new_ree_filter,
+        RunEndEncodedArray::Make(ree_filter.length(), ree_filter.run_ends(),
+                                 /*values=*/out_datum.make_array(), ree_filter.offset()));
+    return new_ree_filter;
   }
   return out_datum.make_array();
 }

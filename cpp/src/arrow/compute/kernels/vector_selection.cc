@@ -1971,9 +1971,9 @@ class FilterMetaFunction : public MetaFunction {
                             const FunctionOptions* options,
                             ExecContext* ctx) const override {
     auto& filter_type = *args[1].type();
-    const bool filter_is_plain_bool = args[1].type()->id() == Type::BOOL;
+    const bool filter_is_plain_bool = filter_type.id() == Type::BOOL;
     const bool filter_is_ree_bool =
-        args[1].type()->id() == Type::RUN_END_ENCODED &&
+        filter_type.id() == Type::RUN_END_ENCODED &&
         checked_cast<arrow::RunEndEncodedType&>(filter_type).value_type()->id() ==
             Type::BOOL;
     if (!filter_is_plain_bool && !filter_is_ree_bool) {
