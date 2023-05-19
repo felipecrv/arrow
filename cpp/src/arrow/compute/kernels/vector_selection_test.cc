@@ -189,6 +189,7 @@ class TestFilterKernel : public ::testing::Test {
  protected:
   TestFilterKernel() : emit_null_(FilterOptions::EMIT_NULL), drop_(FilterOptions::DROP) {}
 
+ private:
   void DoAssertFilter(const std::shared_ptr<Array>& values,
                       const std::shared_ptr<Array>& filter,
                       const std::shared_ptr<Array>& expected) {
@@ -214,6 +215,33 @@ class TestFilterKernel : public ::testing::Test {
     }
   }
 
+  Result<std::shared_ptr<Array>> REEFromJson(const std::shared_ptr<DataType>& ree_type,
+                                             const std::string& json) {
+    auto ree_type_ptr = checked_cast<const RunEndEncodedType*>(ree_type.get());
+    auto array = ArrayFromJSON(ree_type_ptr->value_type(), json);
+    ARROW_ASSIGN_OR_RAISE(
+        auto datum,
+        RunEndEncode(array, RunEndEncodeOptions{ree_type_ptr->run_end_type()}));
+    return datum.make_array();
+  }
+
+  Result<std::shared_ptr<Array>> FilterFromJson(
+      const std::shared_ptr<DataType>& filter_type, const std::string& json) {
+    if (filter_type->id() == Type::RUN_END_ENCODED) {
+      return REEFromJson(filter_type, json);
+    } else {
+      return ArrayFromJSON(filter_type, json);
+    }
+  }
+
+  Result<std::shared_ptr<Array>> REEncode(const std::shared_ptr<Array>& array) {
+    ARROW_ASSIGN_OR_RAISE(auto datum, RunEndEncode(array));
+    return datum.make_array();
+  }
+
+  bool CanRunEndEncode(Type::type type_id) { return !is_nested(type_id); }
+
+ protected:
   void AssertFilter(const std::shared_ptr<Array>& values,
                     const std::shared_ptr<Array>& filter,
                     const std::shared_ptr<Array>& expected) {
@@ -228,20 +256,41 @@ class TestFilterKernel : public ::testing::Test {
     // add N(=2) dummy values at the start and end of `filter`.
     ARROW_SCOPED_TRACE("for sliced values and filter");
     ASSERT_OK_AND_ASSIGN(auto values_filler, MakeArrayOfNull(values->type(), 3));
-    auto filter_filler = ArrayFromJSON(boolean(), "[true, false]");
-    ASSERT_OK_AND_ASSIGN(auto values_sliced,
+    ASSERT_OK_AND_ASSIGN(auto filter_filler,
+                         FilterFromJson(filter->type(), "[true, false]"));
+    ASSERT_OK_AND_ASSIGN(auto values_with_filler,
                          Concatenate({values_filler, values, values_filler}));
-    ASSERT_OK_AND_ASSIGN(auto filter_sliced,
+    ASSERT_OK_AND_ASSIGN(auto filter_with_filler,
                          Concatenate({filter_filler, filter, filter_filler}));
-    values_sliced = values_sliced->Slice(3, values->length());
-    filter_sliced = filter_sliced->Slice(2, filter->length());
+    auto values_sliced = values_with_filler->Slice(3, values->length());
+    auto filter_sliced = filter_with_filler->Slice(2, filter->length());
     DoAssertFilter(values_sliced, filter_sliced, expected);
   }
 
   void AssertFilter(const std::shared_ptr<DataType>& type, const std::string& values,
                     const std::string& filter, const std::string& expected) {
-    AssertFilter(ArrayFromJSON(type, values), ArrayFromJSON(boolean(), filter),
-                 ArrayFromJSON(type, expected));
+    auto values_array = ArrayFromJSON(type, values);
+    auto filter_array = ArrayFromJSON(boolean(), filter);
+    auto expected_array = ArrayFromJSON(type, expected);
+    AssertFilter(values_array, filter_array, expected_array);
+
+    ASSERT_OK_AND_ASSIGN(auto ree_filter, REEncode(filter_array));
+    if (CanRunEndEncode(type->id())) {
+      ASSERT_OK_AND_ASSIGN(auto ree_values, REEncode(values_array));
+      ASSERT_OK_AND_ASSIGN(auto ree_expected, REEncode(expected_array));
+      ARROW_SCOPED_TRACE("for REE values");
+      {
+        ARROW_SCOPED_TRACE("and REE filter");
+        AssertFilter(ree_values, ree_filter, ree_expected);
+      }
+      {
+        ARROW_SCOPED_TRACE("and plain filter");
+        AssertFilter(ree_values, filter_array, ree_expected);
+      }
+    }
+    // TODO(felipecrv): Enable these when the cases for PlainxREE are expanded
+    // ARROW_SCOPED_TRACE("for plain values and REE filter");
+    // AssertFilter(values_array, ree_filter, expected_array);
   }
 
   const FilterOptions emit_null_, drop_;

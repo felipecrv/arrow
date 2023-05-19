@@ -2481,13 +2481,17 @@ std::shared_ptr<VectorFunction> MakeIndicesNonZeroFunction(std::string name,
 }  // namespace
 
 void RegisterVectorSelection(FunctionRegistry* registry) {
+  auto plain_filter_matcher = InputType(Type::BOOL);
+  auto ree_filter_matcher = InputType(match::RunEndEncoded(Type::BOOL));
+  auto ree_values_matcher = [](auto in) { return InputType(match::RunEndEncoded(in)); };
+
   // Filter kernels
   std::vector<SelectionKernelData> filter_kernels = {
       {InputType(match::Primitive()), InputType(Type::BOOL), PrimitiveFilter},
       {InputType(match::BinaryLike()), InputType(Type::BOOL), BinaryFilter},
       {InputType(match::LargeBinaryLike()), InputType(Type::BOOL), BinaryFilter},
       {InputType(Type::FIXED_SIZE_BINARY), InputType(Type::BOOL), FilterExec<FSBImpl>},
-      {InputType(null()), InputType(Type::BOOL), NullFilter},
+      {InputType(Type::NA), InputType(Type::BOOL), NullFilter},
       {InputType(Type::DECIMAL128), InputType(Type::BOOL), FilterExec<FSBImpl>},
       {InputType(Type::DECIMAL256), InputType(Type::BOOL), FilterExec<FSBImpl>},
       {InputType(Type::DICTIONARY), InputType(Type::BOOL), DictionaryFilter},
@@ -2500,16 +2504,41 @@ void RegisterVectorSelection(FunctionRegistry* registry) {
       {InputType(Type::STRUCT), InputType(Type::BOOL), StructFilter},
       // TODO: Reuse ListType kernel for MAP
       {InputType(Type::MAP), InputType(Type::BOOL), FilterExec<ListImpl<MapType>>},
+
       // REE(*) x REE(Boolean) filtering
-      {InputType(match::RunEndEncoded(match::Primitive())),
-       InputType(match::RunEndEncoded(match::SameTypeId(Type::BOOL))), REExREEFilterExec},
+      {ree_values_matcher(match::Primitive()), ree_filter_matcher , REExREEFilterExec},
+      {ree_values_matcher(match::BinaryLike()), ree_filter_matcher, REExREEFilterExec},
+      {ree_values_matcher(match::LargeBinaryLike()), ree_filter_matcher, REExREEFilterExec},
+      {ree_values_matcher(Type::FIXED_SIZE_BINARY), ree_filter_matcher, REExREEFilterExec},
+      {ree_values_matcher(Type::NA), ree_filter_matcher, REExREEFilterExec},
+      {ree_values_matcher(Type::DECIMAL128), ree_filter_matcher, REExREEFilterExec},
+      {ree_values_matcher(Type::DECIMAL256), ree_filter_matcher, REExREEFilterExec},
+
       // REE(*) x Boolean filtering
-      {InputType(match::RunEndEncoded(match::Primitive())), InputType(Type::BOOL),
-       REExPlainFilterExec},
+      {ree_values_matcher(match::Primitive()), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(match::BinaryLike()), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(match::LargeBinaryLike()), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(Type::FIXED_SIZE_BINARY), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(Type::NA), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(Type::DECIMAL128), plain_filter_matcher, REExPlainFilterExec},
+      {ree_values_matcher(Type::DECIMAL256), plain_filter_matcher, REExPlainFilterExec},
+
       // * x REE(Boolean) filtering
-      {InputType(match::Primitive()),
-       InputType(match::RunEndEncoded(match::SameTypeId(Type::BOOL))),
-       PlainxREEFilterExec},
+      {InputType(match::Primitive()), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(match::BinaryLike()), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(match::LargeBinaryLike()), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::FIXED_SIZE_BINARY), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::NA), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::DECIMAL128), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::DECIMAL256), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::DICTIONARY), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::EXTENSION), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::LIST), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::LARGE_LIST), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::FIXED_SIZE_LIST), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::DENSE_UNION), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::STRUCT), ree_filter_matcher, PlainxREEFilterExec},
+      {InputType(Type::MAP), ree_filter_matcher, REExREEFilterExec},
   };
 
   VectorKernel filter_base;
