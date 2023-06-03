@@ -693,37 +693,55 @@ TEST_F(TestIfElseKernel, Decimal) {
   }
 }
 
-template <typename Type>
+template <typename InputListType, typename OutputListType>
+struct ListTypePair {
+  using InputType = InputListType;
+  using OutputType = OutputListType;
+};
+
+using ListArrowTypePairs = ::testing::Types<
+    ListTypePair<ListType, ListViewType>,       // LIST -> LIST -> LIST_VIEW
+    ListTypePair<LargeListType, LargeListType>  // LARGE_LIST -> LARGE_LIST -> LARGE_LIST
+    // TODO(felipecrv): ListTypePair<ListViewType> // LIST_VIEW -> LIST_VIEW -> LIST_VIEW
+    >;
+
+template <typename TypePair>
 class TestIfElseList : public ::testing::Test {};
 
-TYPED_TEST_SUITE(TestIfElseList, ListArrowTypes);
+TYPED_TEST_SUITE(TestIfElseList, ListArrowTypePairs);
 
 TYPED_TEST(TestIfElseList, ListOfInt) {
-  auto type = std::make_shared<TypeParam>(int32());
+  using InputType = typename TypeParam::InputType;
+  using OutputType = typename TypeParam::OutputType;
+  auto input_type = std::make_shared<InputType>(int32());
+  auto output_type = std::make_shared<OutputType>(int32());
   CheckWithDifferentShapes(ArrayFromJSON(boolean(), "[true, true, false, false]"),
-                           ArrayFromJSON(type, "[[], null, [1, null], [2, 3]]"),
-                           ArrayFromJSON(type, "[[4, 5, 6], [7], [null], null]"),
-                           ArrayFromJSON(type, "[[], null, [null], null]"));
+                           ArrayFromJSON(input_type, "[[], null, [1, null], [2, 3]]"),
+                           ArrayFromJSON(input_type, "[[4, 5, 6], [7], [null], null]"),
+                           ArrayFromJSON(output_type, "[[], null, [null], null]"));
 
   CheckWithDifferentShapes(ArrayFromJSON(boolean(), "[null, null, null, null]"),
-                           ArrayFromJSON(type, "[[], [2, 3, 4, 5], null, null]"),
-                           ArrayFromJSON(type, "[[4, 5, 6], null, [null], null]"),
-                           ArrayFromJSON(type, "[null, null, null, null]"));
+                           ArrayFromJSON(input_type, "[[], [2, 3, 4, 5], null, null]"),
+                           ArrayFromJSON(input_type, "[[4, 5, 6], null, [null], null]"),
+                           ArrayFromJSON(output_type, "[null, null, null, null]"));
 }
 
 TYPED_TEST(TestIfElseList, ListOfString) {
-  auto type = std::make_shared<TypeParam>(utf8());
+  using InputType = typename TypeParam::InputType;
+  using OutputType = typename TypeParam::OutputType;
+  auto input_type = std::make_shared<InputType>(utf8());
+  auto output_type = std::make_shared<OutputType>(utf8());
   CheckWithDifferentShapes(
       ArrayFromJSON(boolean(), "[true, true, false, false]"),
-      ArrayFromJSON(type, R"([[], null, ["xyz", null], ["ab", "c"]])"),
-      ArrayFromJSON(type, R"([["hi", "jk", "l"], ["defg"], [null], null])"),
-      ArrayFromJSON(type, R"([[], null, [null], null])"));
+      ArrayFromJSON(input_type, R"([[], null, ["xyz", null], ["ab", "c"]])"),
+      ArrayFromJSON(input_type, R"([["hi", "jk", "l"], ["defg"], [null], null])"),
+      ArrayFromJSON(output_type, R"([[], null, [null], null])"));
 
   CheckWithDifferentShapes(
       ArrayFromJSON(boolean(), "[null, null, null, null]"),
-      ArrayFromJSON(type, R"([[], ["b", "cd", "efg", "h"], null, null])"),
-      ArrayFromJSON(type, R"([["hi", "jk", "l"], null, [null], null])"),
-      ArrayFromJSON(type, R"([null, null, null, null])"));
+      ArrayFromJSON(input_type, R"([[], ["b", "cd", "efg", "h"], null, null])"),
+      ArrayFromJSON(input_type, R"([["hi", "jk", "l"], null, [null], null])"),
+      ArrayFromJSON(output_type, R"([null, null, null, null])"));
 }
 
 TEST_F(TestIfElseKernel, FixedSizeList) {

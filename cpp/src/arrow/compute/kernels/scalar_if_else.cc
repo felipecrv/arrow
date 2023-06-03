@@ -16,6 +16,7 @@
 // under the License.
 
 #include <cstring>
+#include "arrow/array/builder_list_view.h"
 #include "arrow/array/builder_nested.h"
 #include "arrow/array/builder_primitive.h"
 #include "arrow/array/builder_time.h"
@@ -1028,6 +1029,37 @@ struct NestedIfElseExec {
   //  AAA
   static Status Call(KernelContext* ctx, const ArraySpan& cond, const ArraySpan& left,
                      const ArraySpan& right, ExecResult* out) {
+    // LARGE_LIST not included because we don't have a LARGE_LIST_VIEW yet.
+    // TODO(felipecrv): introduce the LargListViewType
+    auto is_var_list_view_like = [](Type::type id) {
+      return id == Type::LIST || id == Type::LIST_VIEW;
+    };
+    if (is_var_list_view_like(left.type->id())) {
+      DCHECK_EQ(left.type->id(), right.type->id());
+      auto value_type = checked_cast<const BaseListType*>(left.type)->value_type();
+      // We can leverage the fact that cond has no nulls very effectively in
+      // the kernel, so it always makes sense to force the null count
+      // calculation with GetNullCount.
+      const bool allocate_validity_bitmap =
+          cond.GetNullCount() != 0 || left.null_count != 0 || right.null_count != 0;
+      switch (left.type->id()) {
+        case Type::LIST:
+          return allocate_validity_bitmap ? IfElseListViewLikeAAACall<ListType, true>(
+                                                ctx, cond, left, right, value_type, out)
+                                          : IfElseListViewLikeAAACall<ListType, false>(
+                                                ctx, cond, left, right, value_type, out);
+        case Type::LIST_VIEW:
+          return allocate_validity_bitmap
+                     ? IfElseListViewLikeAAACall<ListViewType, true>(
+                           ctx, cond, left, right, value_type, out)
+                     : IfElseListViewLikeAAACall<ListViewType, false>(
+                           ctx, cond, left, right, value_type, out);
+        default:
+          break;
+      }
+    }
+
+    // The generic implementation.
     return RunLoop(
         ctx, cond, out,
         [&](ArrayBuilder* builder, int64_t i, int64_t length) {
@@ -1075,6 +1107,245 @@ struct NestedIfElseExec {
         [&](ArrayBuilder* builder, int64_t i, int64_t length) {
           return builder->AppendScalar(right, length);
         });
+  }
+
+  // AAA (ListView-like)
+  // Takes two list-view-like arrays and produce a list-view array.
+  template <typename InputType, bool allocate_validity_bitmap>
+  static Status IfElseListViewLikeAAACall(KernelContext* ctx, const ArraySpan& cond,
+                                          const ArraySpan& left, const ArraySpan& right,
+                                          const std::shared_ptr<DataType>& value_type,
+                                          ExecResult* out) {
+    using offset_type = ListViewType::offset_type;
+    static_assert(std::is_same<offset_type, typename InputType::offset_type>::value,
+                  "offset types must match");
+
+    auto* pool = ctx->memory_pool();
+
+    // Preallocate the output ArrayData except for the child_data array
+    // containing the values. That array is only built at the end.
+    auto* out_data = out->array_data().get();
+    {
+      auto list_view_type = list_view(value_type);
+      std::vector<std::shared_ptr<Buffer>> buffers(3);
+      if constexpr (allocate_validity_bitmap) {
+        ARROW_ASSIGN_OR_RAISE(buffers[0], AllocateBitmap(cond.length, pool));
+      }
+      ARROW_ASSIGN_OR_RAISE(buffers[1],
+                            AllocateBuffer(cond.length * sizeof(offset_type), pool));
+      ARROW_ASSIGN_OR_RAISE(buffers[2],
+                            AllocateBuffer(cond.length * sizeof(offset_type), pool));
+      const int64_t null_count = allocate_validity_bitmap ? kUnknownNullCount : 0;
+      out_data->type = std::move(list_view_type);
+      out_data->length = cond.length;
+      out_data->buffers = std::move(buffers);
+      out_data->child_data = {NULLPTR};
+      out_data->null_count = null_count;
+      out_data->offset = 0;
+    }
+
+    auto* out_validity = out_data->GetMutableValues<uint8_t>(0, 0);  // may be NULLPTR
+    auto* out_offsets = out_data->GetMutableValues<offset_type>(1, 0);
+    auto* out_sizes = out_data->GetMutableValues<offset_type>(2, 0);
+
+    constexpr bool input_is_list_view = is_list_view_type<InputType>::value;
+
+    const auto* left_validity = left.buffers[0].data;  // may be NULLPTR
+    const auto* left_offsets = reinterpret_cast<const offset_type*>(left.buffers[1].data);
+    const auto* left_sizes =
+        input_is_list_view ? reinterpret_cast<const offset_type*>(left.buffers[2].data)
+                           : NULLPTR;
+    const bool left_may_have_nulls = left_validity != NULLPTR && left.null_count != 0;
+
+    const auto* right_validity = right.buffers[0].data;  // may be NULLPTR
+    const auto* right_offsets =
+        reinterpret_cast<const offset_type*>(right.buffers[1].data);
+    const auto* right_sizes =
+        input_is_list_view ? reinterpret_cast<const offset_type*>(right.buffers[2].data)
+                           : NULLPTR;
+    const bool right_may_have_nulls = right_validity != NULLPTR && right.null_count != 0;
+
+    const auto* cond_validity = cond.buffers[0].data;  // may be NULLPTR
+    const auto* cond_data = cond.buffers[1].data;
+    const bool cond_may_have_nulls = cond_validity != NULLPTR && cond.null_count != 0;
+
+    auto GetLeftSize = [&](int64_t pos) -> offset_type {
+      if constexpr (input_is_list_view) {
+        return left_sizes[left.offset + pos];
+      } else {
+        return left_offsets[left.offset + pos + 1] - left_offsets[left.offset + pos];
+      }
+    };
+    auto GetRightSize = [&](int64_t pos) -> offset_type {
+      if constexpr (input_is_list_view) {
+        return right_sizes[right.offset + pos];
+      } else {
+        return right_offsets[right.offset + pos + 1] - right_offsets[right.offset + pos];
+      }
+    };
+
+    // 1st pass:
+    //  - populate validity bitmap and sizes
+    //  - calculate the total size of the child data array
+    offset_type child_data_size = 0;
+    if (cond_may_have_nulls) {
+      if constexpr (allocate_validity_bitmap) {
+        // Zero the validity bitmap and sizes buffers so we
+        // only have to set the non-null values in the loop.
+        bit_util::SetBitsTo(out_validity, 0, cond.length, false);
+        memset(out_sizes, 0, cond.length * sizeof(offset_type));
+        // out_offsets[i + j] will be set in final passes.
+
+        BitRunReader reader(cond_validity, cond.offset, cond.length);
+        arrow::internal::BitRun run;
+        for (int64_t i = 0;; i += run.length) {
+          run = reader.NextRun();
+          if (run.length == 0) break;
+          if (run.set) {  // Non-NULL cond run
+            for (int64_t j = 0; j < run.length; j++) {
+              bool valid = true;
+              offset_type size = 0;
+              if (bit_util::GetBit(cond_data, cond.offset + i + j)) {  // left
+                if (left_may_have_nulls) {
+                  valid = bit_util::GetBit(left_validity, left.offset + i + j);
+                }
+                if (valid) {
+                  size = GetLeftSize(i + j);
+                }
+              } else {  // right
+                if (right_may_have_nulls) {
+                  valid = bit_util::GetBit(right_validity, right.offset + i + j);
+                }
+                if (valid) {
+                  size = GetRightSize(i + j);
+                }
+              }
+              if (valid) {
+                bit_util::SetBitTo(out_validity, i + j, true);
+                out_sizes[i + j] = size;
+                child_data_size += size;
+              }
+            }
+          }
+        }
+      } else {
+        DCHECK(false) << "having nulls in the condition implies allocate_validity_bitmap";
+      }
+    } else {  // cond is non-nullable
+      BitRunReader reader(cond_data, cond.offset, cond.length);
+      arrow::internal::BitRun cond_run;
+      for (int64_t i = 0;; i += cond_run.length) {
+        cond_run = reader.NextRun();
+        if (cond_run.length == 0) break;
+        if (cond_run.set) {  // left
+          if (left_may_have_nulls) {
+            if constexpr (allocate_validity_bitmap) {
+              ::arrow::internal::CopyBitmap(left_validity, left.offset + i,
+                                            cond_run.length, out_validity, i);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const bool valid = bit_util::GetBit(left_validity, left.offset + i + j);
+              const offset_type size = valid ? GetLeftSize(i + j) : 0;
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          } else {
+            if constexpr (allocate_validity_bitmap) {
+              bit_util::SetBitsTo(out_validity, i, cond_run.length, true);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const offset_type size = GetLeftSize(i + j);
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          }
+        } else {  // right
+          if (right_may_have_nulls) {
+            if constexpr (allocate_validity_bitmap) {
+              ::arrow::internal::CopyBitmap(right_validity, right.offset + i,
+                                            cond_run.length, out_validity, i);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const bool valid = bit_util::GetBit(right_validity, right.offset + i + j);
+              const offset_type size = valid ? GetRightSize(i + j) : 0;
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          } else {
+            if constexpr (allocate_validity_bitmap) {
+              bit_util::SetBitsTo(out_validity, i, cond_run.length, true);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const offset_type size = GetRightSize(i + j);
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          }
+        }
+      }
+    }
+
+    std::unique_ptr<ArrayBuilder> value_builder;
+    RETURN_NOT_OK(MakeBuilderExactIndex(pool, value_type, &value_builder));
+    RETURN_NOT_OK(value_builder->Reserve(child_data_size));
+
+    offset_type accumulated_offset = 0;
+
+    // 2nd and 3rd passes: populate child data array with data from left and right
+    // operands.
+    auto CopyOperandChildData = [&](const ArraySpan& operand, bool is_rhs) -> Status {
+      // The use of offsets and child_data here works for both List and ListView operands.
+      const auto* operand_offsets =
+          reinterpret_cast<const offset_type*>(operand.buffers[1].data);
+      const auto& operand_child_data = operand.child_data[0];
+
+      // We try to accumulate the longest possible run from the
+      // operand before copying the data to the output.
+      int64_t operand_run_offset = 0;
+      int64_t operand_run_size = 0;
+
+      BitRunReader reader(cond_data, cond.offset, cond.length);
+      arrow::internal::BitRun cond_run;
+      for (int64_t i = 0;; i += cond_run.length) {
+        cond_run = reader.NextRun();
+        if (cond_run.length == 0) break;
+        if (cond_run.set ^ is_rhs) {
+          for (int64_t j = 0; j < cond_run.length; j++) {
+            // A size > 0 implies a valid cond value and a valid operand value.
+            const offset_type size = out_sizes[i + j];
+            if (size > 0) {
+              const offset_type operand_offset = operand_offsets[operand.offset + i + j];
+              if (operand_offset == operand_run_offset + operand_run_size) {
+                // Extend the current contiguous run.
+                operand_run_size += size;
+              } else {
+                // Flush current contiguous run.
+                if (ARROW_PREDICT_TRUE(operand_run_size > 0)) {
+                  RETURN_NOT_OK(value_builder->AppendArraySlice(
+                      operand_child_data, operand_run_offset, operand_run_size));
+                }
+                // Start a new run.
+                operand_run_offset = operand_offset;
+                operand_run_size = size;
+              }
+            }
+            out_offsets[i + j] = accumulated_offset;
+            accumulated_offset += size;
+          }
+        }
+      }
+      if (operand_run_size > 0) {
+        RETURN_NOT_OK(value_builder->AppendArraySlice(
+            operand_child_data, operand_run_offset, operand_run_size));
+      }
+
+      DCHECK_EQ(accumulated_offset, value_builder->length());
+      return Status::OK();
+    };
+    RETURN_NOT_OK(CopyOperandChildData(left, false));
+    RETURN_NOT_OK(CopyOperandChildData(right, true));
+
+    return value_builder->FinishInternal(&out_data->child_data[0]);
   }
 
   template <typename HandleLeft, typename HandleRight>
@@ -1307,11 +1578,25 @@ void AddFixedWidthIfElseKernel(const std::shared_ptr<IfElseFunction>& scalar_fun
   DCHECK_OK(scalar_function->AddKernel(std::move(kernel)));
 }
 
+Result<TypeHolder> NestedIfElseKernelOutputType(KernelContext* ctx,
+                                                const std::vector<TypeHolder>& args) {
+  // "if_else" kernels, by default, output an array of the same type as the
+  // input arguments after the boolean array, but when these arguments are of
+  // type LIST, the kernel output type is LIST_VIEW.
+  DCHECK_EQ(args[1].id(), args[2].id());
+  if (args[1].id() == Type::LIST) {
+    auto value_type = checked_cast<const ListType*>(args[1].type)->value_type();
+    return TypeHolder{std::make_shared<ListViewType>(value_type)};
+  }
+  return LastType(ctx, args);
+}
+
 void AddNestedIfElseKernels(const std::shared_ptr<IfElseFunction>& scalar_function) {
   for (const auto type_id :
        {Type::LIST, Type::LARGE_LIST, Type::FIXED_SIZE_LIST, Type::STRUCT,
         Type::DENSE_UNION, Type::SPARSE_UNION, Type::DICTIONARY}) {
-    ScalarKernel kernel({boolean(), InputType(type_id), InputType(type_id)}, LastType,
+    std::vector<InputType> in_types = {boolean(), InputType(type_id), InputType(type_id)};
+    ScalarKernel kernel(std::move(in_types), NestedIfElseKernelOutputType,
                         NestedIfElseExec::Exec);
     kernel.null_handling = NullHandling::COMPUTED_NO_PREALLOCATE;
     kernel.mem_allocation = MemAllocation::NO_PREALLOCATE;
