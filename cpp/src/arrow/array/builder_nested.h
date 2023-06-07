@@ -95,15 +95,31 @@ class BaseListBuilder : public ArrayBuilder {
   /// \brief Start a new variable-length list slot
   ///
   /// This function should be called before beginning to append elements to the
-  /// value builder
-  Status Append(bool is_valid = true) {
+  /// value builder.
+  ///
+  /// \param list_length The number of elements in the list (necessary on
+  /// list-view builders)
+  Status Append(bool is_valid, int64_t list_length) {
     ARROW_RETURN_NOT_OK(Reserve(1));
     UnsafeAppendToBitmap(is_valid);
-    UnsafeAppendDimensions(value_builder_->length(), 0);
+    UnsafeAppendDimensions(value_builder_->length(), list_length);
     return Status::OK();
   }
 
-  Status AppendNull() final { return Append(false); }
+  /// \brief Start a new variable-length list slot
+  ///
+  /// This function should be called before beginning to append elements to the
+  /// value builder
+  ///
+  /// Prefer Append(bool, int64_t) as that works correctly for list-view types
+  /// as well as list types.
+  Status Append(bool is_valid = true) {
+    static_assert(TYPE::type_id != Type::LIST_VIEW,
+                  "Append(bool) does not work correctly for ListView builders");
+    return Append(is_valid, 0);
+  }
+
+  Status AppendNull() final { return Append(false, 0); }
 
   Status AppendNulls(int64_t length) final {
     ARROW_RETURN_NOT_OK(Reserve(length));
@@ -112,7 +128,7 @@ class BaseListBuilder : public ArrayBuilder {
     return Status::OK();
   }
 
-  Status AppendEmptyValue() final { return Append(true); }
+  Status AppendEmptyValue() final { return Append(true, 0); }
 
   Status AppendEmptyValues(int64_t length) final {
     ARROW_RETURN_NOT_OK(Reserve(length));
