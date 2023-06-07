@@ -99,7 +99,7 @@ class BaseListBuilder : public ArrayBuilder {
   Status Append(bool is_valid = true) {
     ARROW_RETURN_NOT_OK(Reserve(1));
     UnsafeAppendToBitmap(is_valid);
-    UnsafeAppendNextOffset();
+    UnsafeAppendDimensions(value_builder_->length(), 0);
     return Status::OK();
   }
 
@@ -108,10 +108,7 @@ class BaseListBuilder : public ArrayBuilder {
   Status AppendNulls(int64_t length) final {
     ARROW_RETURN_NOT_OK(Reserve(length));
     UnsafeAppendToBitmap(length, false);
-    const int64_t num_values = value_builder_->length();
-    for (int64_t i = 0; i < length; ++i) {
-      offsets_builder_.UnsafeAppend(static_cast<offset_type>(num_values));
-    }
+    UnsafeAppendEmptyDimensions(length);
     return Status::OK();
   }
 
@@ -120,16 +117,18 @@ class BaseListBuilder : public ArrayBuilder {
   Status AppendEmptyValues(int64_t length) final {
     ARROW_RETURN_NOT_OK(Reserve(length));
     UnsafeAppendToBitmap(length, true);
-    const int64_t num_values = value_builder_->length();
-    for (int64_t i = 0; i < length; ++i) {
-      offsets_builder_.UnsafeAppend(static_cast<offset_type>(num_values));
-    }
+    UnsafeAppendEmptyDimensions(length);
     return Status::OK();
   }
 
   Status AppendArraySlice(const ArraySpan& array, int64_t offset,
                           int64_t length) override {
+    constexpr bool is_list_view = TYPE::type_id == Type::LIST_VIEW;
     const offset_type* offsets = array.GetValues<offset_type>(1);
+    const offset_type* sizes = NULLPTR;
+    if constexpr (is_list_view) {
+      sizes = array.GetValues<offset_type>(2);
+    }
     const bool all_valid = !array.MayHaveLogicalNulls();
     const uint8_t* validity = array.HasValidityBitmap() ? array.buffers[0].data : NULLPTR;
     ARROW_RETURN_NOT_OK(Reserve(length));
@@ -137,12 +136,19 @@ class BaseListBuilder : public ArrayBuilder {
       const bool is_valid =
           all_valid || (validity && bit_util::GetBit(validity, array.offset + row)) ||
           array.IsValid(row);
-      UnsafeAppendToBitmap(is_valid);
-      UnsafeAppendNextOffset();
+      int64_t size = 0;
       if (is_valid) {
-        int64_t slot_length = offsets[row + 1] - offsets[row];
-        ARROW_RETURN_NOT_OK(value_builder_->AppendArraySlice(array.child_data[0],
-                                                             offsets[row], slot_length));
+        if constexpr (is_list_view) {
+          size = sizes[row];
+        } else {
+          size = offsets[row + 1] - offsets[row];
+        }
+      }
+      UnsafeAppendToBitmap(is_valid);
+      UnsafeAppendDimensions(value_builder_->length(), size);
+      if (is_valid) {
+        ARROW_RETURN_NOT_OK(
+            value_builder_->AppendArraySlice(array.child_data[0], offsets[row], size));
       }
     }
     return Status::OK();
@@ -196,15 +202,28 @@ class BaseListBuilder : public ArrayBuilder {
   std::shared_ptr<ArrayBuilder> value_builder_;
   std::shared_ptr<Field> value_field_;
 
+  /// \brief Appends the last extra offset present in List and LargeList arrays.
   Status AppendNextOffset() {
     ARROW_RETURN_NOT_OK(ValidateOverflow(0));
-    const int64_t num_values = value_builder_->length();
-    return offsets_builder_.Append(static_cast<offset_type>(num_values));
+    const int64_t offset = value_builder_->length();
+    return offsets_builder_.Append(static_cast<offset_type>(offset));
   }
 
-  void UnsafeAppendNextOffset() {
-    const int64_t num_values = value_builder_->length();
-    offsets_builder_.UnsafeAppend(static_cast<offset_type>(num_values));
+  /// \brief Append dimensions for num_values empty list slots.
+  ///
+  /// ListViewBuilder overrides this to also append the sizes.
+  virtual void UnsafeAppendEmptyDimensions(int64_t num_values) {
+    const int64_t offset = value_builder_->length();
+    for (int64_t i = 0; i < num_values; ++i) {
+      offsets_builder_.UnsafeAppend(static_cast<offset_type>(offset));
+    }
+  }
+
+  /// \brief Append dimensions for a single list slot.
+  ///
+  /// ListViewBuilder overrides this to also append the size.
+  virtual void UnsafeAppendDimensions(int64_t offset, int64_t size) {
+    offsets_builder_.UnsafeAppend(static_cast<offset_type>(offset));
   }
 };
 
