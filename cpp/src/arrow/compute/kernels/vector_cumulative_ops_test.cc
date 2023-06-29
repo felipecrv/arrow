@@ -42,11 +42,13 @@ constexpr static std::array<const char*, 6> kCumulativeFunctionNames{
     "cumulative_prod_checked", "cumulative_min",         "cumulative_max"};
 
 TEST(TestCumulative, Empty) {
+  auto empty_array_json = "[]";
+  auto empty_chunks_json = std::vector<std::string>{"[]"};
   for (auto function : kCumulativeFunctionNames) {
     CumulativeOptions options;
     for (auto ty : NumericTypes()) {
-      auto empty_arr = ArrayFromJSON(ty, "[]");
-      auto empty_chunked = ChunkedArrayFromJSON(ty, {"[]"});
+      auto empty_arr = ArrayFromJSON(ty, empty_array_json);
+      auto empty_chunked = ChunkedArrayFromJSON(ty, empty_chunks_json);
       CheckVectorUnary(function, empty_arr, empty_arr, &options);
 
       CheckVectorUnary(function, empty_chunked, empty_chunked, &options);
@@ -55,12 +57,15 @@ TEST(TestCumulative, Empty) {
 }
 
 TEST(TestCumulative, AllNulls) {
+  auto nulls_arr_json = "[null, null, null]";
+  auto nulls_one_chunk_json = std::vector<std::string>{"[null, null, null]"};
+  auto nulls_three_chunks_json = std::vector<std::string>{"[null]", "[null]", "[null]"};
   for (auto function : kCumulativeFunctionNames) {
     CumulativeOptions options;
     for (auto ty : NumericTypes()) {
-      auto nulls_arr = ArrayFromJSON(ty, "[null, null, null]");
-      auto nulls_one_chunk = ChunkedArrayFromJSON(ty, {"[null, null, null]"});
-      auto nulls_three_chunks = ChunkedArrayFromJSON(ty, {"[null]", "[null]", "[null]"});
+      auto nulls_arr = ArrayFromJSON(ty, nulls_arr_json);
+      auto nulls_one_chunk = ChunkedArrayFromJSON(ty, nulls_one_chunk_json);
+      auto nulls_three_chunks = ChunkedArrayFromJSON(ty, nulls_three_chunks_json);
       CheckVectorUnary(function, nulls_arr, nulls_arr, &options);
 
       CheckVectorUnary(function, nulls_one_chunk, nulls_one_chunk, &options);

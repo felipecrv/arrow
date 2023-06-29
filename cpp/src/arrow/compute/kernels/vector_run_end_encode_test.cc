@@ -68,10 +68,10 @@ struct REETestData {
         "[null * " + std::to_string(input_slice_length) + "]");
   }
 
-  static REETestData JSONChunked(std::shared_ptr<DataType> data_type,
-                                 std::vector<std::string> inputs_json,
-                                 std::vector<std::string> expected_values_json,
-                                 std::vector<std::string> expected_run_ends_json,
+  static REETestData JSONChunked(const std::shared_ptr<DataType>& data_type,
+                                 const std::vector<std::string>& inputs_json,
+                                 const std::vector<std::string>& expected_values_json,
+                                 std::vector<std::string>&& expected_run_ends_json,
                                  int64_t input_offset = 0) {
     std::vector<std::shared_ptr<Array>> inputs;
     inputs.reserve(inputs_json.size());
@@ -132,7 +132,8 @@ struct REETestData {
 };
 
 // For valgrind
-std::ostream& operator<<(std::ostream& out, const REETestData& test_data) {
+[[maybe_unused]] std::ostream& operator<<(std::ostream& out,
+                                          const REETestData& test_data) {
   out << "REETestData{description = " << test_data.description
       << ", input = " << test_data.input->ToString() << ", expected_values = ";
 
@@ -146,8 +147,9 @@ std::ostream& operator<<(std::ostream& out, const REETestData& test_data) {
 
 }  // namespace
 
-class TestRunEndEncodeDecode : public ::testing::TestWithParam<
-                                   std::tuple<REETestData, std::shared_ptr<DataType>>> {
+class TestRunEndEncodeDecode
+    : public ::testing::TestWithParam<
+          std::tuple<const REETestData*, std::shared_ptr<DataType>>> {
  public:
   void AddArtificialOffsetInChildArray(ArrayData* array, int64_t offset) {
     auto& child = array->child_data[1];
@@ -172,39 +174,39 @@ TEST_P(TestRunEndEncodeDecode, EncodeDecodeArray) {
 
   ASSERT_OK_AND_ASSIGN(
       Datum encoded_datum,
-      RunEndEncode(data.InputDatum(), RunEndEncodeOptions{run_end_type}));
+      RunEndEncode(data->InputDatum(), RunEndEncodeOptions{run_end_type}));
 
   auto encoded = AsChunkedArray(encoded_datum);
   ASSERT_OK(encoded->ValidateFull());
-  ASSERT_EQ(data.input->length(), encoded->length());
+  ASSERT_EQ(data->input->length(), encoded->length());
 
   for (int i = 0; i < encoded->num_chunks(); i++) {
     auto& chunk = encoded->chunk(i);
     auto run_ends_array = MakeArray(chunk->data()->child_data[0]);
     auto values_array = MakeArray(chunk->data()->child_data[1]);
     ASSERT_OK(chunk->ValidateFull());
-    ASSERT_ARRAYS_EQUAL(*ArrayFromJSON(run_end_type, data.expected_run_ends_json[i]),
+    ASSERT_ARRAYS_EQUAL(*ArrayFromJSON(run_end_type, data->expected_run_ends_json[i]),
                         *run_ends_array);
-    ASSERT_ARRAYS_EQUAL(*values_array, *data.expected_values[i]);
+    ASSERT_ARRAYS_EQUAL(*values_array, *data->expected_values[i]);
     ASSERT_EQ(chunk->data()->buffers.size(), 1);
     ASSERT_EQ(chunk->data()->buffers[0], NULLPTR);
     ASSERT_EQ(chunk->data()->child_data.size(), 2);
     ASSERT_EQ(run_ends_array->data()->buffers[0], NULLPTR);
-    ASSERT_EQ(run_ends_array->length(), data.expected_values[i]->length());
+    ASSERT_EQ(run_ends_array->length(), data->expected_values[i]->length());
     ASSERT_EQ(run_ends_array->offset(), 0);
-    ASSERT_EQ(chunk->data()->length, data.input->chunk(i)->length());
+    ASSERT_EQ(chunk->data()->length, data->input->chunk(i)->length());
     ASSERT_EQ(chunk->data()->offset, 0);
-    ASSERT_EQ(*chunk->data()->type, RunEndEncodedType(run_end_type, data.input->type()));
+    ASSERT_EQ(*chunk->data()->type, RunEndEncodedType(run_end_type, data->input->type()));
     ASSERT_EQ(chunk->data()->null_count, 0);
   }
 
-  ASSERT_OK_AND_ASSIGN(Datum decoded_datum, data.chunked
+  ASSERT_OK_AND_ASSIGN(Datum decoded_datum, data->chunked
                                                 ? RunEndDecode(encoded)
                                                 : RunEndDecode(encoded->chunk(0)));
   auto decoded = AsChunkedArray(decoded_datum);
   ASSERT_OK(decoded->ValidateFull());
   for (int i = 0; i < decoded->num_chunks(); i++) {
-    ASSERT_ARRAYS_EQUAL(*decoded->chunk(i), *data.input->chunk(i));
+    ASSERT_ARRAYS_EQUAL(*decoded->chunk(i), *data->input->chunk(i));
   }
 }
 
@@ -214,27 +216,27 @@ TEST_P(TestRunEndEncodeDecode, EncodeDecodeArray) {
 // off the encoded array and decodes that.
 TEST_P(TestRunEndEncodeDecode, DecodeWithOffset) {
   auto [data, run_end_type] = GetParam();
-  if (data.input->length() == 0) {
+  if (data->input->length() == 0) {
     return;
   }
 
   ASSERT_OK_AND_ASSIGN(
       Datum encoded_datum,
-      RunEndEncode(data.InputDatum(), RunEndEncodeOptions{run_end_type}));
+      RunEndEncode(data->InputDatum(), RunEndEncodeOptions{run_end_type}));
 
   auto encoded = AsChunkedArray(encoded_datum);
-  ASSERT_EQ(encoded->num_chunks(), data.input->num_chunks());
+  ASSERT_EQ(encoded->num_chunks(), data->input->num_chunks());
   ASSERT_GT(encoded->num_chunks(), 0);
 
   ASSERT_OK(encoded->ValidateFull());
 
   ASSERT_OK_AND_ASSIGN(Datum datum_without_first,
-                       data.chunked
+                       data->chunked
                            ? RunEndDecode(encoded->Slice(1, encoded->length() - 1))
                            : RunEndDecode(encoded->chunk(0)->Slice(
                                  1, encoded->chunk(0)->data()->length - 1)));
   ASSERT_OK_AND_ASSIGN(Datum datum_without_last,
-                       data.chunked
+                       data->chunked
                            ? RunEndDecode(encoded->Slice(0, encoded->length() - 1))
                            : RunEndDecode(encoded->chunk(0)->Slice(
                                  0, encoded->chunk(0)->data()->length - 1)));
@@ -244,11 +246,11 @@ TEST_P(TestRunEndEncodeDecode, DecodeWithOffset) {
     ASSERT_OK(array_without_first->ValidateFull());
     ASSERT_OK(array_without_last->ValidateFull());
     const auto expected_without_first =
-        (i == 0) ? data.input->chunk(i)->Slice(1) : data.input->chunk(i);
+        (i == 0) ? data->input->chunk(i)->Slice(1) : data->input->chunk(i);
     const auto expected_without_last =
         (i == encoded->num_chunks() - 1)
-            ? data.input->chunk(i)->Slice(0, data.input->chunk(i)->length() - 1)
-            : data.input->chunk(i);
+            ? data->input->chunk(i)->Slice(0, data->input->chunk(i)->length() - 1)
+            : data->input->chunk(i);
     ASSERT_ARRAYS_EQUAL(*array_without_first->chunk(i), *expected_without_first);
     ASSERT_ARRAYS_EQUAL(*array_without_last->chunk(i), *expected_without_last);
   }
@@ -258,22 +260,22 @@ TEST_P(TestRunEndEncodeDecode, DecodeWithOffset) {
 // removes the first run in the test data. It's no-op for chunked input.
 TEST_P(TestRunEndEncodeDecode, DecodeWithOffsetInChildArray) {
   auto [data, run_end_type] = GetParam();
-  if (data.chunked) {
+  if (data->chunked) {
     return;
   }
 
-  ASSERT_EQ(data.input->num_chunks(), 1);
+  ASSERT_EQ(data->input->num_chunks(), 1);
 
   ASSERT_OK_AND_ASSIGN(
       Datum encoded_datum,
-      RunEndEncode(data.InputDatum(), RunEndEncodeOptions{run_end_type}));
+      RunEndEncode(data->InputDatum(), RunEndEncodeOptions{run_end_type}));
   auto encoded = encoded_datum.array();
 
   ASSERT_NO_FATAL_FAILURE(this->AddArtificialOffsetInChildArray(encoded.get(), 100));
   ASSERT_OK_AND_ASSIGN(Datum datum_without_first, RunEndDecode(encoded));
   auto array_without_first = datum_without_first.make_array();
   ASSERT_OK(array_without_first->ValidateFull());
-  ASSERT_ARRAYS_EQUAL(*array_without_first, *data.input->chunk(0));
+  ASSERT_ARRAYS_EQUAL(*array_without_first, *data->input->chunk(0));
 }
 
 std::vector<REETestData> GenerateTestData() {
@@ -370,8 +372,23 @@ std::vector<REETestData> GenerateTestData() {
   return test_data;
 }
 
+// Create a vector of pointers so testing::Combine doesn't have to copy every
+// REETestData instance for all 3 run-end types.
+template <typename T>
+std::vector<const T*> VectorOfPointers(const std::vector<T>& values) {
+  std::vector<const T*> pointers;
+  pointers.reserve(values.size());
+  for (const auto& value : values) {
+    pointers.push_back(&value);
+  }
+  return pointers;
+}
+
+const auto test_data = GenerateTestData();
+const auto test_data_pointers = VectorOfPointers(test_data);
+
 INSTANTIATE_TEST_SUITE_P(EncodeArrayTests, TestRunEndEncodeDecode,
-                         ::testing::Combine(::testing::ValuesIn(GenerateTestData()),
+                         ::testing::Combine(::testing::ValuesIn(test_data_pointers),
                                             ::testing::Values(int16(), int32(),
                                                               int64())));
 
