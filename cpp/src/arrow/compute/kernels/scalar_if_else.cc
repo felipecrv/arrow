@@ -1028,6 +1028,15 @@ struct NestedIfElseExec {
   //  AAA
   static Status Call(KernelContext* ctx, const ArraySpan& cond, const ArraySpan& left,
                      const ArraySpan& right, ExecResult* out) {
+    auto type_id = left.type->id();
+    if (type_id == Type::LIST_VIEW) {
+      return IfElseListViewAAACall<ListViewType>(ctx, cond, left, right, out);
+    }
+    if (type_id == Type::LARGE_LIST_VIEW) {
+      return IfElseListViewAAACall<LargeListViewType>(ctx, cond, left, right, out);
+    }
+
+    // The generic implementation.
     return RunLoopOfNestedIfElseExec(
         ctx, cond, out,
         [&](ArrayBuilder* builder, int64_t i, int64_t length) {
@@ -1075,6 +1084,229 @@ struct NestedIfElseExec {
         [&](ArrayBuilder* builder, int64_t i, int64_t length) {
           return builder->AppendScalar(right, length);
         });
+  }
+
+  template <typename InputType>
+  static Status IfElseListViewAAACall(KernelContext* ctx, const ArraySpan& cond,
+                                      const ArraySpan& left, const ArraySpan& right,
+                                      ExecResult* out) {
+    // We can leverage the fact that cond has no nulls very effectively in
+    // the kernel, so it always makes sense to force the null_count
+    // calculation on cond with a GetNullCount() call.
+    const bool allocate_validity_bitmap =
+        cond.GetNullCount() != 0 || left.null_count != 0 || right.null_count != 0;
+    return allocate_validity_bitmap
+               ? IfElseListViewAAACall<InputType, true>(ctx, cond, left, right, out)
+               : IfElseListViewAAACall<InputType, false>(ctx, cond, left, right, out);
+  }
+
+  // AAA (list-view producing specialization)
+  template <typename InputType, bool allocate_validity_bitmap>
+  static Status IfElseListViewAAACall(KernelContext* ctx, const ArraySpan& cond,
+                                      const ArraySpan& left, const ArraySpan& right,
+                                      ExecResult* out) {
+    DCHECK_EQ(cond.length, left.length);
+    DCHECK_EQ(cond.length, right.length);
+    using offset_type = typename InputType::offset_type;
+    auto* pool = ctx->memory_pool();
+
+    // Preallocate the output ArrayData except for the child_data array
+    // containing the values. That array is only built at the end.
+    auto* out_data = out->array_data().get();
+    {
+      BufferVector buffers(3);
+      if constexpr (allocate_validity_bitmap) {
+        // Validity bitmaps is zeroed on allocation, so we
+        // only have to set the non-null values in the loop.
+        ARROW_ASSIGN_OR_RAISE(buffers[0], AllocateEmptyBitmap(cond.length, pool));
+      }
+      ARROW_ASSIGN_OR_RAISE(buffers[1],
+                            AllocateBuffer(cond.length * sizeof(offset_type), pool));
+      ARROW_ASSIGN_OR_RAISE(buffers[2],
+                            AllocateBuffer(cond.length * sizeof(offset_type), pool));
+      DCHECK_EQ(out_data->length, cond.length);
+      out_data->buffers = std::move(buffers);
+      out_data->child_data = {NULLPTR};
+      out_data->null_count = allocate_validity_bitmap ? kUnknownNullCount : 0;
+      out_data->offset = 0;
+    }
+
+    auto* out_validity = out_data->GetMutableValues<uint8_t>(0);  // may be NULLPTR
+    auto* out_offsets = out_data->GetMutableValues<offset_type>(1);
+    auto* out_sizes = out_data->GetMutableValues<offset_type>(2);
+
+    // Cond
+    const auto* cond_validity = cond.buffers[0].data;  // may be NULLPTR
+    const auto* cond_data = cond.buffers[1].data;      // As a bitmap
+    const bool cond_may_have_nulls = cond_validity && cond.GetNullCount() != 0;
+
+    // Left
+    const auto* left_validity = left.buffers[0].data;  // may be NULLPTR
+    const auto* left_sizes = left.GetValues<offset_type>(2);
+    const bool left_may_have_nulls = left_validity != NULLPTR && left.null_count != 0;
+
+    // Right
+    const auto* right_validity = right.buffers[0].data;  // may be NULLPTR
+    const auto* right_sizes = right.GetValues<offset_type>(2);
+    const bool right_may_have_nulls = right_validity != NULLPTR && right.null_count != 0;
+
+    // 1st pass:
+    //  - populate validity bitmap and sizes
+    //  - calculate the total size of the child data array
+    offset_type child_data_size = 0;
+    if (cond_may_have_nulls) {
+      if constexpr (allocate_validity_bitmap) {
+        BitRunReader reader(cond_validity, cond.offset, cond.length);
+        arrow::internal::BitRun run;
+        for (int64_t i = 0;; i += run.length) {
+          run = reader.NextRun();
+          if (run.length == 0) break;
+          if (run.set) {  // Non-NULL cond run
+            for (int64_t j = 0; j < run.length; j++) {
+              bool valid = true;
+              offset_type size = 0;
+              if (bit_util::GetBit(cond_data, cond.offset + i + j)) {  // left
+                if (left_may_have_nulls) {
+                  valid = bit_util::GetBit(left_validity, left.offset + i + j);
+                }
+                if (valid) {
+                  size = left_sizes[i + j];
+                }
+              } else {  // right
+                if (right_may_have_nulls) {
+                  valid = bit_util::GetBit(right_validity, right.offset + i + j);
+                }
+                if (valid) {
+                  size = right_sizes[i + j];
+                }
+              }
+              if (valid) {
+                bit_util::SetBitTo(out_validity, i + j, true);
+                out_sizes[i + j] = size;
+                child_data_size += size;
+              }
+            }
+          }
+        }
+      } else {
+        DCHECK(false) << "having nulls in the condition implies allocate_validity_bitmap";
+      }
+    } else {  // cond is non-nullable
+      BitRunReader reader(cond_data, cond.offset, cond.length);
+      arrow::internal::BitRun cond_run;
+      for (int64_t i = 0;; i += cond_run.length) {
+        cond_run = reader.NextRun();
+        if (cond_run.length == 0) break;
+        if (cond_run.set) {  // left
+          if (left_may_have_nulls) {
+            if constexpr (allocate_validity_bitmap) {
+              ::arrow::internal::CopyBitmap(left_validity, left.offset + i,
+                                            cond_run.length, out_validity, i);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const bool valid = bit_util::GetBit(left_validity, left.offset + i + j);
+              const offset_type size = valid ? left_sizes[i + j] : 0;
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          } else {
+            if constexpr (allocate_validity_bitmap) {
+              bit_util::SetBitsTo(out_validity, i, cond_run.length, true);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const offset_type size = left_sizes[i + j];
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          }
+        } else {  // right
+          if (right_may_have_nulls) {
+            if constexpr (allocate_validity_bitmap) {
+              ::arrow::internal::CopyBitmap(right_validity, right.offset + i,
+                                            cond_run.length, out_validity, i);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const bool valid = bit_util::GetBit(right_validity, right.offset + i + j);
+              const offset_type size = valid ? right_sizes[i + j] : 0;
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          } else {
+            if constexpr (allocate_validity_bitmap) {
+              bit_util::SetBitsTo(out_validity, i, cond_run.length, true);
+            }
+            for (int64_t j = 0; j < cond_run.length; j++) {
+              const offset_type size = right_sizes[i + j];
+              out_sizes[i + j] = size;
+              child_data_size += size;
+            }
+          }
+        }
+      }
+    }
+
+    std::unique_ptr<ArrayBuilder> value_builder;
+    auto value_type = checked_cast<const InputType&>(*out_data->type).value_type();
+    RETURN_NOT_OK(MakeBuilderExactIndex(pool, value_type, &value_builder));
+    RETURN_NOT_OK(value_builder->Reserve(child_data_size));
+
+    offset_type accumulated_offset = 0;
+
+    // 2nd and 3rd passes: populate child data array with data from left and right
+    // operands.
+    auto CopyOperandChildData = [&](const ArraySpan& operand, bool is_rhs) -> Status {
+      // The use of offsets and child_data here works for both List and ListView operands.
+      const auto* operand_offsets =
+          reinterpret_cast<const offset_type*>(operand.buffers[1].data);
+      const auto& operand_child_data = operand.child_data[0];
+
+      // We try to accumulate the longest possible run from the
+      // operand before copying the data to the output.
+      int64_t operand_run_offset = 0;
+      int64_t operand_run_size = 0;
+
+      BitRunReader reader(cond_data, cond.offset, cond.length);
+      arrow::internal::BitRun cond_run;
+      for (int64_t i = 0;; i += cond_run.length) {
+        cond_run = reader.NextRun();
+        if (cond_run.length == 0) break;
+        if (cond_run.set ^ is_rhs) {
+          for (int64_t j = 0; j < cond_run.length; j++) {
+            // A size > 0 implies a valid cond value and a valid operand value.
+            const offset_type size = out_sizes[i + j];
+            if (size > 0) {
+              const offset_type operand_offset = operand_offsets[operand.offset + i + j];
+              if (operand_offset == operand_run_offset + operand_run_size) {
+                // Extend the current contiguous run.
+                operand_run_size += size;
+              } else {
+                // Flush current contiguous run.
+                if (ARROW_PREDICT_TRUE(operand_run_size > 0)) {
+                  RETURN_NOT_OK(value_builder->AppendArraySlice(
+                      operand_child_data, operand_run_offset, operand_run_size));
+                }
+                // Start a new run.
+                operand_run_offset = operand_offset;
+                operand_run_size = size;
+              }
+              out_offsets[i + j] = accumulated_offset;
+              accumulated_offset += size;
+            }
+          }
+        }
+      }
+      if (operand_run_size > 0) {
+        RETURN_NOT_OK(value_builder->AppendArraySlice(
+            operand_child_data, operand_run_offset, operand_run_size));
+      }
+
+      DCHECK_EQ(accumulated_offset, value_builder->length());
+      return Status::OK();
+    };
+    RETURN_NOT_OK(CopyOperandChildData(left, /*is_rhs=*/false));
+    RETURN_NOT_OK(CopyOperandChildData(right, /*is_rhs=*/true));
+
+    return value_builder->FinishInternal(&out_data->child_data[0]);
   }
 
   template <typename HandleLeft, typename HandleRight>
