@@ -40,6 +40,22 @@ namespace internal {
 ARROW_EXPORT Result<std::pair<int64_t, int64_t>> RangeOfValuesUsed(
     const ArraySpan& input);
 
+/// \brief Builds a ListViewArray from a ListArray
+ARROW_EXPORT Result<std::shared_ptr<ListViewArray>> ListViewFromList(
+    const ListArray& source, MemoryPool* pool);
+
+/// \brief Builds a LargeListViewArray from a LargeListArray
+ARROW_EXPORT Result<std::shared_ptr<LargeListViewArray>> ListViewFromList(
+    const LargeListArray& source, MemoryPool* pool);
+
+/// \brief Builds a ListArray from a ListViewArray
+ARROW_EXPORT Result<std::shared_ptr<ListArray>> ListFromListView(
+    const ListViewArray& source, MemoryPool* pool);
+
+/// \brief Builds a LargeListArray from a LargeListViewArray
+ARROW_EXPORT Result<std::shared_ptr<LargeListArray>> ListFromListView(
+    const LargeListViewArray& source, MemoryPool* pool);
+
 }  // namespace internal
 
 }  // namespace list_util
