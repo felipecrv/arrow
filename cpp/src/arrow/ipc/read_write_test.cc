@@ -373,10 +373,12 @@ TEST_F(TestSchemaMetadata, MetadataVersionForwardCompatibility) {
 const std::vector<test::MakeRecordBatch*> kBatchCases = {
     &MakeIntRecordBatch,
     &MakeListRecordBatch,
+    &MakeListViewRecordBatch,
     &MakeFixedSizeListRecordBatch,
     &MakeNonNullRecordBatch,
     &MakeZeroLengthRecordBatch,
     &MakeDeeplyNestedList,
+    &MakeDeeplyNestedListView,
     &MakeStringTypesRecordBatchWithNulls,
     &MakeStruct,
     &MakeUnion,
@@ -971,6 +973,9 @@ TEST_F(TestWriteRecordBatch, IntegerGetRecordBatchSize) {
   ASSERT_OK(MakeListRecordBatch(&batch));
   TestGetRecordBatchSize(options_, batch);
 
+  ASSERT_OK(MakeListViewRecordBatch(&batch));
+  TestGetRecordBatchSize(options_, batch);
+
   ASSERT_OK(MakeZeroLengthRecordBatch(&batch));
   TestGetRecordBatchSize(options_, batch);
 
@@ -978,6 +983,9 @@ TEST_F(TestWriteRecordBatch, IntegerGetRecordBatchSize) {
   TestGetRecordBatchSize(options_, batch);
 
   ASSERT_OK(MakeDeeplyNestedList(&batch));
+  TestGetRecordBatchSize(options_, batch);
+
+  ASSERT_OK(MakeDeeplyNestedListView(&batch));
   TestGetRecordBatchSize(options_, batch);
 }
 
