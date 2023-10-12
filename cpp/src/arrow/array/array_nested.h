@@ -349,9 +349,8 @@ class ARROW_EXPORT LargeListViewArray : public BaseListViewArray<LargeListViewTy
   /// that project views into the values array.
   ///
   /// This function does the bare minimum of validation of the offsets/sizes and
-  /// input types. TODO: describe the minimum validation
+  /// input types.
   ///
-  /// TODO: review this
   /// Offsets of an Array's null bitmap can be present or an explicit
   /// null_bitmap, but not both.
   ///
