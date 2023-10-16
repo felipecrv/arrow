@@ -58,6 +58,7 @@
 #include "arrow/testing/util.h"
 #include "arrow/util/future.h"
 #include "arrow/util/key_value_metadata.h"
+#include "arrow/util/pcg_random.h"
 
 namespace arrow {
 namespace fs {
@@ -165,7 +166,7 @@ auto* testbench_env = ::testing::AddGlobalTestEnvironment(Testbench());
 
 class GcsIntegrationTest : public ::testing::Test {
  protected:
-  GcsIntegrationTest() : generator_(std::mt19937_64(std::random_device()())) {}
+  GcsIntegrationTest() : generator_{std::random_device()()} {}
 
   void SetUp() override {
     ASSERT_THAT(Testbench(), NotNull());
@@ -298,7 +299,7 @@ class GcsIntegrationTest : public ::testing::Test {
     return s;
   }
 
-  std::mt19937_64 generator_;
+  random::pcg64_fast generator_;
   std::string bucket_name_;
 };
 
