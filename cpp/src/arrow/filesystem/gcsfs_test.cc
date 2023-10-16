@@ -165,13 +165,13 @@ auto* testbench_env = ::testing::AddGlobalTestEnvironment(Testbench());
 
 class GcsIntegrationTest : public ::testing::Test {
  protected:
+  GcsIntegrationTest() : generator_(std::mt19937_64(std::random_device()())) {}
+
   void SetUp() override {
     ASSERT_THAT(Testbench(), NotNull());
     ASSERT_EQ(Testbench()->error(), "");
     ASSERT_TRUE(Testbench()->running());
 
-    // Initialize a PRNG with a small amount of entropy.
-    generator_ = std::mt19937_64(std::random_device()());
     bucket_name_ = RandomChars(32);
 
     // Create a bucket and a small file in the testbench. This makes it easier to
@@ -207,7 +207,7 @@ class GcsIntegrationTest : public ::testing::Test {
 
   std::string NotFoundObjectPath() { return PreexistingBucketPath() + "not-found"; }
 
-  GcsOptions TestGcsOptions() {
+  GcsOptions TestGcsOptions() const {
     auto options = GcsOptions::Anonymous();
     options.endpoint_override = "127.0.0.1:" + Testbench()->port();
     options.retry_limit_seconds = 60;
@@ -215,7 +215,7 @@ class GcsIntegrationTest : public ::testing::Test {
     return options;
   }
 
-  gcs::Client GcsClient() {
+  gcs::Client GcsClient() const {
     return gcs::Client(
         google::cloud::Options{}
             .set<gcs::RestEndpointOption>("http://127.0.0.1:" + Testbench()->port())
@@ -223,8 +223,10 @@ class GcsIntegrationTest : public ::testing::Test {
   }
 
   std::string RandomLine(int lineno, std::size_t width) {
-    auto line = std::to_string(lineno) + ":    ";
-    line += RandomChars(width - line.size() - 1);
+    auto line = std::to_string(lineno);
+    line.reserve(width);
+    line += ":    ";
+    RandomChars(width - line.size() - 1, line);
     line += '\n';
     return line;
   }
@@ -284,11 +286,15 @@ class GcsIntegrationTest : public ::testing::Test {
   }
 
  private:
-  std::string RandomChars(std::size_t count) {
-    auto const fillers = std::string("abcdefghijlkmnopqrstuvwxyz0123456789");
-    std::uniform_int_distribution<std::size_t> d(0, fillers.size() - 1);
-    std::string s;
+  void RandomChars(std::size_t count, std::string& s) {
+    const char* fillers = "abcdefghijlkmnopqrstuvwxyz0123456789";
+    std::uniform_int_distribution<std::size_t> d(0, strlen(fillers) - 1);
     std::generate_n(std::back_inserter(s), count, [&] { return fillers[d(generator_)]; });
+  }
+
+  std::string RandomChars(std::size_t count) {
+    std::string s;
+    RandomChars(count, s);
     return s;
   }
 
