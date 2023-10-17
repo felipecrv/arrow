@@ -161,14 +161,14 @@ Result<std::shared_ptr<typename TypeTraits<TYPE>::ArrayType>> ListViewArrayFromA
   if (offsets.offset() != sizes.offset()) {
     return Status::Invalid("List offsets and sizes must have the same offset");
   }
-  const int64_t offset = sizes.offset();
+  const int64_t array_offset = sizes.offset();
 
   if (null_bitmap) {
     if (offsets.null_count() > 0 || sizes.null_count() > 0) {
       return Status::Invalid(
           "Ambiguous to specify both validity map and offsets or sizes with nulls");
     }
-    if (offset != 0) {
+    if (array_offset != 0) {
       return Status::Invalid(
           "List offsets and sizes must not be slices if a validity map is specified");
     }
@@ -204,7 +204,7 @@ Result<std::shared_ptr<typename TypeTraits<TYPE>::ArrayType>> ListViewArrayFromA
       typed_sizes.values(),
   });
   auto data = ArrayData::Make(type, sizes.length(), std::move(buffers), {values.data()},
-                              null_count, offset);
+                              null_count, array_offset);
   return std::make_shared<ArrayType>(std::move(data));
 }
 
@@ -365,10 +365,10 @@ std::shared_ptr<Array> BoxSizes(const std::shared_ptr<DataType>& boxed_type,
                                 const ArrayData& data) {
   DCHECK(is_list_view(data.type->id()));
   std::vector<std::shared_ptr<Buffer>> buffers = {nullptr, data.buffers[2]};
-  auto offsets_data =
+  auto sizes_data =
       std::make_shared<ArrayData>(boxed_type, data.length, std::move(buffers),
                                   /*null_count=*/0, data.offset);
-  return MakeArray(offsets_data);
+  return MakeArray(sizes_data);
 }
 
 }  // namespace
