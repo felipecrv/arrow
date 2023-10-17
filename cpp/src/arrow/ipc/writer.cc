@@ -371,8 +371,7 @@ class RecordBatchSerializer {
         }
       }
 
-      auto* dest_offsets =
-          reinterpret_cast<offset_type*>(shifted_offsets->mutable_data());
+      auto* dest_offsets = shifted_offsets->mutable_data_as<offset_type>();
 
       for (int i = 0; i < array.length(); ++i) {
         dest_offsets[i] = array.value_offset(i) - min_offset;
