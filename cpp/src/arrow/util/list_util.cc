@@ -166,7 +166,7 @@ std::pair<int64_t, int64_t> RangeOfValuesUsedByList(const ArraySpan& input) {
   if (input.length == 0) {
     return {0, 0};
   }
-  const auto* offsets = reinterpret_cast<const offset_type*>(input.buffers[1].data);
+  const auto* offsets = input.buffers[1].data_as<offset_type>();
   const int64_t min_offset = offsets[input.offset];
   const int64_t max_end = offsets[input.offset + input.length];
   return {min_offset, max_end - min_offset};
