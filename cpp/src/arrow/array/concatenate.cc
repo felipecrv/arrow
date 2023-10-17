@@ -218,7 +218,7 @@ void PutListViewOffsets(const Buffer& src, offset_type displacement, offset_type
   if (src.size() == 0) {
     return;
   }
-  auto src_begin = reinterpret_cast<const offset_type*>(src.data());
+  auto src_begin = src.data_as<offset_type>();
   auto src_end = reinterpret_cast<const offset_type*>(src.data() + src.size());
   // NOTE: Concatenate can be called during IPC reads to append delta dictionaries.
   // Avoid UB on non-validated input by doing the addition in the unsigned domain.
