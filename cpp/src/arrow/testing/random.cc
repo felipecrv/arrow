@@ -778,7 +778,7 @@ Result<std::shared_ptr<Array>> RandomListView(RAG& self, const Array& values,
   BufferVector buffers{2};
   buffers[0] = NULLPTR;
   buffers[1] = *AllocateBuffer(sizeof(offset_type) * length, alignment, memory_pool);
-  auto sizes = reinterpret_cast<offset_type*>(buffers[1]->mutable_data());
+  auto sizes = buffers[1]->mutable_data_as<offset_type>();
 
   // Derive	sizes from offsets taking coverage into account
   pcg32_fast rng(self.seed());
