@@ -154,7 +154,7 @@ Status PutOffsets(const Buffer& src, Offset first_offset, Offset* dst,
   }
 
   // Get the range of offsets to transfer from src
-  auto src_begin = reinterpret_cast<const Offset*>(src.data());
+  auto src_begin = src.data_as<Offset>();
   auto src_end = reinterpret_cast<const Offset*>(src.data() + src.size());
 
   // Compute the range of values which is spanned by this range of offsets
