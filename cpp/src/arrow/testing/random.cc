@@ -686,7 +686,7 @@ std::shared_ptr<Array> ViewOffsetsFromLengthsArray(
   buffers[0] = NULLPTR;  // sizes can have nulls, offsets don't have to
   buffers[1] = *AllocateBuffer(sizeof(offset_type) * mutable_sizes_array.length(),
                                alignment, memory_pool);
-  auto offsets = reinterpret_cast<offset_type*>(buffers[1]->mutable_data());
+  auto offsets = buffers[1]->mutable_data_as<offset_type>();
 
   double offset_base = 0.0;
   offset_type max_view_end = 0;
