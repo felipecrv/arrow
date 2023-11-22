@@ -705,10 +705,11 @@ set(ARROW_STATIC_INSTALL_INTERFACE_LIBS)
 # /opt/homebrew/include/absl/**/*.h are used instead of .h provided by
 # bundled Abseil.
 if(ARROW_GCS)
-  list(APPEND ARROW_SHARED_LINK_LIBS google-cloud-cpp::storage)
-  list(APPEND ARROW_STATIC_LINK_LIBS google-cloud-cpp::storage)
+  set(ARROW_GCS_LIBS google-cloud-cpp::storage google-cloud-cpp::experimental-storage_grpc)
+  list(APPEND ARROW_SHARED_LINK_LIBS ${ARROW_GCS_LIBS})
+  list(APPEND ARROW_STATIC_LINK_LIBS ${ARROW_GCS_LIBS})
   if(google_cloud_cpp_storage_SOURCE STREQUAL "SYSTEM")
-    list(APPEND ARROW_STATIC_INSTALL_INTERFACE_LIBS google-cloud-cpp::storage)
+    list(APPEND ARROW_STATIC_INSTALL_INTERFACE_LIBS ${ARROW_GCS_LIBS})
   endif()
 endif()
 

@@ -401,6 +401,9 @@ if(ARROW_GCS)
   set(ARROW_WITH_GOOGLE_CLOUD_CPP ON)
   set(ARROW_WITH_NLOHMANN_JSON ON)
   set(ARROW_WITH_ZLIB ON)
+  # for experimental gRPC GCS client
+  set(ARROW_WITH_GRPC ON)
+  set(ARROW_WITH_PROTOBUF ON)
 endif()
 
 if(ARROW_AZURE)
@@ -4174,6 +4177,8 @@ macro(build_google_cloud_cpp_storage)
       # other services (Spanner, Bigtable, etc.) add them (as a list) to this
       # parameter. Each has its own `google-cloud-cpp::*` library.
       -DGOOGLE_CLOUD_CPP_ENABLE=storage
+      # Compile the experimental gRPC transport for storage as well.
+      -DGOOGLE_CLOUD_CPP_STORAGE_ENABLE_GRPC=ON
       # We need this to build with OpenSSL 3.0.
       # See also: https://github.com/googleapis/google-cloud-cpp/issues/8544
       -DGOOGLE_CLOUD_CPP_ENABLE_WERROR=OFF
@@ -4192,17 +4197,16 @@ macro(build_google_cloud_cpp_storage)
   add_dependencies(google_cloud_cpp_dependencies crc32c_ep)
   add_dependencies(google_cloud_cpp_dependencies nlohmann_json::nlohmann_json)
 
-  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE
-      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_storage${CMAKE_STATIC_LIBRARY_SUFFIX}"
-  )
-
-  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_REST_INTERNAL
-      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_rest_internal${CMAKE_STATIC_LIBRARY_SUFFIX}"
-  )
-
   set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_COMMON
-      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_common${CMAKE_STATIC_LIBRARY_SUFFIX}"
-  )
+      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_common${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_REST_INTERNAL
+      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_rest_internal${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_GRPC_UTILS
+      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_grpc_utils${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE
+      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_storage${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE_GRPC
+      "${GOOGLE_CLOUD_CPP_INSTALL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}google_cloud_cpp_storage_grpc${CMAKE_STATIC_LIBRARY_SUFFIX}")
 
   # Remove unused directories to save build directory storage.
   # 141MB -> 79MB
@@ -4221,9 +4225,11 @@ macro(build_google_cloud_cpp_storage)
                       URL_HASH "SHA256=${ARROW_GOOGLE_CLOUD_CPP_BUILD_SHA256_CHECKSUM}"
                       PATCH_COMMAND ${GOOGLE_CLOUD_CPP_PATCH_COMMAND}
                       CMAKE_ARGS ${GOOGLE_CLOUD_CPP_CMAKE_ARGS}
-                      BUILD_BYPRODUCTS ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE}
+                      BUILD_BYPRODUCTS ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_COMMON}
                                        ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_REST_INTERNAL}
-                                       ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_COMMON}
+                                       ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_GRPC_UTILS}
+                                       ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE}
+                                       ${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE_GRPC}
                       DEPENDS google_cloud_cpp_dependencies)
 
   # Work around https://gitlab.kitware.com/cmake/cmake/issues/15052
@@ -4252,6 +4258,7 @@ macro(build_google_cloud_cpp_storage)
                                   Threads::Threads
                                   OpenSSL::Crypto)
 
+  # google-cloud-cpp::rest-internal
   add_library(google-cloud-cpp::rest-internal STATIC IMPORTED)
   set_target_properties(google-cloud-cpp::rest-internal
                         PROPERTIES IMPORTED_LOCATION
@@ -4265,14 +4272,35 @@ macro(build_google_cloud_cpp_storage)
                                   nlohmann_json::nlohmann_json
                                   OpenSSL::SSL
                                   OpenSSL::Crypto)
-
+  # google-cloud-cpp::grpc_utils
+  # Dependency list from: https://github.com/googleapis/google-cloud-cpp/blob/c86b9431f4560942563b2faf4808a24f6d081f20/google/cloud/google_cloud_cpp_grpc_utils.cmake
+  add_library(google-cloud-cpp::grpc_utils STATIC IMPORTED)
+  set_target_properties(google-cloud-cpp::grpc_utils
+                        PROPERTIES IMPORTED_LOCATION "${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_GRPC_UTILS}")
+  target_include_directories(google-cloud-cpp::grpc_utils BEFORE
+                             INTERFACE "${GOOGLE_CLOUD_CPP_INCLUDE_DIR}")
+  target_link_libraries(google-cloud-cpp::grpc_utils
+                        INTERFACE absl::function_ref
+                                  absl::memory
+                                  absl::time
+                                  absl::variant
+                                  # google-cloud-cpp::iam_credentials_v1_iamcredentials_protos
+                                  # google-cloud-cpp::iam_v1_policy_protos
+                                  # google-cloud-cpp::longrunning_operations_protos
+                                  # google-cloud-cpp::rpc_error_details_protos
+                                  # google-cloud-cpp::rpc_status_protos
+                                  google-cloud-cpp::common
+                                  gRPC::grpc++
+                                  gRPC::grpc)
+  add_dependencies(google-cloud-cpp::grpc_utils google_cloud_cpp_ep)
+  # google-cloud-cpp::storage
+  # Dependency list from: https://github.com/googleapis/google-cloud-cpp/blob/main/google/cloud/storage/google_cloud_cpp_storage.cmake
   add_library(google-cloud-cpp::storage STATIC IMPORTED)
   set_target_properties(google-cloud-cpp::storage
                         PROPERTIES IMPORTED_LOCATION
                                    "${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE}")
   target_include_directories(google-cloud-cpp::storage BEFORE
                              INTERFACE "${GOOGLE_CLOUD_CPP_INCLUDE_DIR}")
-  # Update this from https://github.com/googleapis/google-cloud-cpp/blob/main/google/cloud/storage/google_cloud_cpp_storage.cmake
   target_link_libraries(google-cloud-cpp::storage
                         INTERFACE google-cloud-cpp::common
                                   google-cloud-cpp::rest-internal
@@ -4289,11 +4317,34 @@ macro(build_google_cloud_cpp_storage)
                                   OpenSSL::Crypto
                                   ZLIB::ZLIB)
   add_dependencies(google-cloud-cpp::storage google_cloud_cpp_ep)
+  # google-cloud-cpp::experimental-storage_grpc
+  add_library(google-cloud-cpp::experimental-storage_grpc STATIC IMPORTED)
+  set_target_properties(google-cloud-cpp::experimental-storage_grpc
+                        PROPERTIES IMPORTED_LOCATION
+                                   "${GOOGLE_CLOUD_CPP_STATIC_LIBRARY_STORAGE}")
+  target_include_directories(google-cloud-cpp::experimental-storage_grpc BEFORE
+                             INTERFACE "${GOOGLE_CLOUD_CPP_INCLUDE_DIR}")
+ target_link_libraries(
+        google-cloud-cpp::experimental-storage_grpc
+        INTERFACE google-cloud-cpp::storage
+                  google-cloud-cpp::grpc_utils
+                  google-cloud-cpp::common
+                  # google-cloud-cpp::storage_protos
+                  nlohmann_json::nlohmann_json
+                  gRPC::grpc++
+                  arrow::protobuf::libprotobuf
+                  absl::strings
+                  Crc32c::crc32c
+                  CURL::libcurl
+                  Threads::Threads
+                  OpenSSL::Crypto)
 
   list(APPEND
        ARROW_BUNDLED_STATIC_LIBS
-       google-cloud-cpp::storage
+       google-cloud-cpp::common
        google-cloud-cpp::rest-internal
+       google-cloud-cpp::grpc_utils
+       google-cloud-cpp::storage
        google-cloud-cpp::common)
   if(ABSL_VENDORED)
     # Figure out what absl libraries (not header-only) are required by the
@@ -4340,6 +4391,9 @@ if(ARROW_WITH_GOOGLE_CLOUD_CPP)
 
   resolve_dependency(google_cloud_cpp_storage PC_PACKAGE_NAMES google_cloud_cpp_storage)
   get_target_property(google_cloud_cpp_storage_INCLUDE_DIR google-cloud-cpp::storage
+                      INTERFACE_INCLUDE_DIRECTORIES)
+  get_target_property(google_cloud_cpp_storage_experimental_INCLUDE_DIR
+                      google-cloud-cpp::experimental-storage_grpc
                       INTERFACE_INCLUDE_DIRECTORIES)
   message(STATUS "Found google-cloud-cpp::storage headers: ${google_cloud_cpp_storage_INCLUDE_DIR}"
   )

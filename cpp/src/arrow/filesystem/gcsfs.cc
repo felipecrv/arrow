@@ -18,6 +18,10 @@
 #include "arrow/filesystem/gcsfs.h"
 
 #include <google/cloud/storage/client.h>
+#include <google/cloud/storage/grpc_plugin.h>
+// #include "google/cloud/storage/options.h"
+// #include "google/cloud/common_options.h"
+// #include "google/cloud/options.h"
 #include <algorithm>
 #include <chrono>
 
@@ -49,6 +53,7 @@ bool GcsCredentials::Equals(const GcsCredentials& other) const {
 namespace {
 
 namespace gcs = google::cloud::storage;
+namespace gcs_experimental = google::cloud::storage_experimental;
 using GcsCode = google::cloud::StatusCode;
 using GcsStatus = google::cloud::Status;
 
@@ -325,7 +330,9 @@ class GcsRandomAccessFile : public arrow::io::RandomAccessFile {
 class GcsFileSystem::Impl {
  public:
   explicit Impl(GcsOptions o)
-      : options_(std::move(o)), client_(internal::AsGoogleCloudOptions(options_)) {}
+      : options_(std::move(o)),
+        client_(gcs_experimental::DefaultGrpcClient(
+            internal::AsGoogleCloudOptions(options_))) {}
 
   const GcsOptions& options() const { return options_; }
 
