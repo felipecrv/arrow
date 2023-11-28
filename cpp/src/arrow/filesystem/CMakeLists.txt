@@ -28,6 +28,12 @@ add_arrow_test(filesystem-test
                EXTRA_LABELS
                filesystem)
 
+add_arrow_test(filesystem-model-test
+               SOURCES
+               filesystem_model_test.cc
+               EXTRA_LABELS
+               filesystem)
+
 if(ARROW_BUILD_BENCHMARKS)
   add_arrow_benchmark(localfs_benchmark
                       PREFIX
