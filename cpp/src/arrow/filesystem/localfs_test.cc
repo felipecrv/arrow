@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "arrow/filesystem/filesystem.h"
+#include "arrow/filesystem/filesystem_test_bench.h"
 #include "arrow/filesystem/localfs.h"
 #include "arrow/filesystem/path_util.h"
 #include "arrow/filesystem/test_util.h"
@@ -43,16 +44,6 @@ using ::arrow::internal::FileDescriptor;
 using ::arrow::internal::PlatformFilename;
 using ::arrow::internal::TemporaryDir;
 using ::arrow::internal::UriFromAbsolutePath;
-
-class LocalFSTestMixin : public ::testing::Test {
- public:
-  void SetUp() override {
-    ASSERT_OK_AND_ASSIGN(temp_dir_, TemporaryDir::Make("test-localfs-"));
-  }
-
- protected:
-  std::unique_ptr<TemporaryDir> temp_dir_;
-};
 
 struct CommonPathFormatter {
   std::string operator()(std::string fn) { return fn; }
@@ -127,6 +118,8 @@ TEST(DetectAbsolutePath, Basics) {
 template <typename PathFormatter>
 class TestLocalFSGeneric : public LocalFSTestMixin, public GenericFileSystemTest {
  public:
+  TestLocalFSGeneric() : LocalFSTestMixin("test-localfs-") {}
+
   void SetUp() override {
     LocalFSTestMixin::SetUp();
     local_fs_ = std::make_shared<LocalFileSystem>(options());
