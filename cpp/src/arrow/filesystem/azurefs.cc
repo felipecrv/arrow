@@ -67,13 +67,18 @@ AzureOptions::~AzureOptions() = default;
 
 bool AzureOptions::Equals(const AzureOptions& other) const {
   // TODO(GH-38598): update here when more auth methods are added.
-  const bool equals = blob_storage_authority == other.blob_storage_authority &&
-                      dfs_storage_authority == other.dfs_storage_authority &&
-                      blob_storage_scheme == other.blob_storage_scheme &&
-                      dfs_storage_scheme == other.dfs_storage_scheme &&
-                      default_metadata == other.default_metadata &&
-                      account_name == other.account_name &&
-                      credential_kind_ == other.credential_kind_;
+  const bool equals =
+      blob_storage_authority == other.blob_storage_authority &&
+      dfs_storage_authority == other.dfs_storage_authority &&
+      blob_storage_scheme == other.blob_storage_scheme &&
+      dfs_storage_scheme == other.dfs_storage_scheme &&
+      require_hierarchical_namespace == other.require_hierarchical_namespace &&
+      // require_hierarchical_namespace implies use_hierarchical_namespace_if_enabled
+      (require_hierarchical_namespace ||
+       use_hierarchical_namespace_if_enabled ==
+           other.use_hierarchical_namespace_if_enabled) &&
+      default_metadata == other.default_metadata && account_name == other.account_name &&
+      credential_kind_ == other.credential_kind_;
   if (!equals) {
     return false;
   }

@@ -100,6 +100,29 @@ struct ARROW_EXPORT AzureOptions {
   // std::string connection_string;
   // std::string sas_token;
 
+  /// \brief Require that all operations be performed via Azure Data Lake Storage Gen2
+  /// APIs with Hierarchical Namespace (HNS) [1] enabled.
+  ///
+  /// If HNS is not enabled in the storage account, then all operations that can use HNS
+  /// will fail without any fallback to the blobs APIs. Set this to true when you want to
+  /// ensure you're benefiting from the atomicity guarantees provided by HNS when
+  /// operating on directories (moving, renaming, and deleting).
+  ///
+  /// Defaults to false. Implies `use_hierarchical_namespace_if_enabled`.
+  ///
+  /// [1]:
+  /// https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-namespace
+  bool require_hierarchical_namespace = false;
+
+  /// \brief Use Hierarchical Namespace (HNS) [1] for Azure Data Lake Storage Gen2
+  /// if enabled on the storage account.
+  ///
+  /// Defaults to true.
+  ///
+  /// [1]:
+  /// https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-namespace
+  bool use_hierarchical_namespace_if_enabled = true;
+
   /// \brief Default metadata for OpenOutputStream.
   ///
   /// This will be ignored if non-empty metadata is passed to OpenOutputStream.

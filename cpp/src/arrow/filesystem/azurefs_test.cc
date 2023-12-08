@@ -334,6 +334,20 @@ TEST(AzureFileSystem, InitializeWithWorkloadIdentityCredential) {
 TEST(AzureFileSystem, OptionsCompare) {
   AzureOptions options;
   EXPECT_TRUE(options.Equals(options));
+
+  // require_hierarchical_namespace implies use_hierarchical_namespace_if_enabled
+  AzureOptions require_hns;
+  require_hns.require_hierarchical_namespace = true;
+  require_hns.use_hierarchical_namespace_if_enabled = false;  // ignored
+  AzureOptions require_hns2;
+  require_hns2.require_hierarchical_namespace = true;
+  require_hns2.use_hierarchical_namespace_if_enabled = true;
+  EXPECT_TRUE(require_hns.Equals(require_hns2));
+
+  require_hns.require_hierarchical_namespace = false;
+  // now require_hns.use_hierarchical_namespace_if_enabled=false is not ignored
+  require_hns2.require_hierarchical_namespace = false;
+  EXPECT_FALSE(require_hns.Equals(require_hns2));
 }
 
 struct PreexistingData {
