@@ -857,6 +857,29 @@ Result<HNSSupport> CheckIfHierarchicalNamespaceIsEnabled(
 // -----------------------------------------------------------------------
 // AzureFilesystem Implementation
 
+namespace {
+
+Result<FileInfo> GetContainerPropertiesAsFileInfo(
+    const std::string& container_name, Blobs::BlobContainerClient& container_client) {
+  FileInfo info{container_name};
+  try {
+    auto properties = container_client.GetProperties();
+    info.set_type(FileType::Directory);
+    info.set_mtime(std::chrono::system_clock::time_point{properties.Value.LastModified});
+    return info;
+  } catch (const Storage::StorageException& exception) {
+    if (IsContainerNotFound(exception)) {
+      info.set_type(FileType::NotFound);
+      return info;
+    }
+    return ExceptionToStatus("GetProperties for '" + container_client.GetUrl() +
+                                 "' failed with an unexpected error.",
+                             exception);
+  }
+}
+
+}  // namespace
+
 class AzureFileSystem::Impl {
  private:
   io::IOContext io_context_;
@@ -910,43 +933,22 @@ class AzureFileSystem::Impl {
 
  public:
   Result<FileInfo> GetFileInfo(const AzureLocation& location) {
-    FileInfo info;
-    info.set_path(location.all);
-
     if (location.container.empty()) {
-      // The location is invalid if the container is empty but the path is not.
       DCHECK(location.path.empty());
-      // This location must be derived from the root path. FileInfo should describe it
-      // as a directory and there isn't any extra metadata to fetch.
-      info.set_type(FileType::Directory);
-      return info;
+      // Root directory of the storage account.
+      return FileInfo{"", FileType::Directory};
     }
     if (location.path.empty()) {
-      // The location refers to a container. This is a directory if it exists.
+      // We have a container, but no path within the container.
+      // The container itself represents a directory.
       auto container_client =
           blob_service_client_->GetBlobContainerClient(location.container);
-      try {
-        auto properties = container_client.GetProperties();
-        info.set_type(FileType::Directory);
-        info.set_mtime(
-            std::chrono::system_clock::time_point{properties.Value.LastModified});
-        return info;
-      } catch (const Storage::StorageException& exception) {
-        if (IsContainerNotFound(exception)) {
-          info.set_type(FileType::NotFound);
-          return info;
-        }
-        return ExceptionToStatus(
-            "GetProperties for '" + container_client.GetUrl() +
-                "' failed with an unexpected Azure error. GetFileInfo is unable to "
-                "determine whether the container exists.",
-            exception);
-      }
+      return GetContainerPropertiesAsFileInfo(location.container, container_client);
     }
-
     // There is a path to search within the container.
-    auto file_client = datalake_service_client_->GetFileSystemClient(location.container)
-                           .GetFileClient(location.path);
+    FileInfo info{location.all};
+    auto adlfs_client = datalake_service_client_->GetFileSystemClient(location.container);
+    auto file_client = adlfs_client.GetFileClient(location.path);
     try {
       auto properties = file_client.GetProperties();
       if (properties.Value.IsDirectory) {
@@ -968,8 +970,6 @@ class AzureFileSystem::Impl {
       return info;
     } catch (const Storage::StorageException& exception) {
       if (exception.StatusCode == Http::HttpStatusCode::NotFound) {
-        auto adlfs_client =
-            datalake_service_client_->GetFileSystemClient(location.container);
         ARROW_ASSIGN_OR_RAISE(auto hns_support,
                               HierarchicalNamespaceSupport(adlfs_client));
         if (hns_support == HNSSupport::kContainerNotFound ||
