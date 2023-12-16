@@ -859,6 +859,10 @@ Result<HNSSupport> CheckIfHierarchicalNamespaceIsEnabled(
 
 namespace {
 
+const std::string kDelimiter = std::string{internal::kSep};
+
+// Operations using the Azure Blob Storage API {{{
+
 Result<FileInfo> GetContainerPropertiesAsFileInfo(
     const std::string& container_name, Blobs::BlobContainerClient& container_client) {
   FileInfo info{container_name};
@@ -893,6 +897,88 @@ FileInfo FileInfoFromBlob(std::string_view container,
   info.set_mtime(std::chrono::system_clock::time_point{blob.Details.LastModified});
   return info;
 }
+
+// On flat namespace accounts there are no real directories. Directories are
+// implied by empty directory marker blobs with names ending in "/" or there
+// being blobs with names starting with the directory path.
+Result<FileInfo> GetFileInfo(Blobs::BlobContainerClient& container_client,
+                             const AzureLocation& location) {
+  DCHECK(!location.path.empty());
+  Blobs::ListBlobsOptions options;
+  options.Prefix = internal::RemoveTrailingSlash(location.path);
+  options.PageSizeHint = 1;
+
+  try {
+    FileInfo info{location.all};
+    auto list_response = container_client.ListBlobsByHierarchy(kDelimiter, options);
+    if (!list_response.BlobPrefixes.empty()) {
+      const auto& blob_prefix = list_response.BlobPrefixes[0];
+      if (blob_prefix == internal::EnsureTrailingSlash(location.path)) {
+        info.set_type(FileType::Directory);
+        return info;
+      }
+    }
+    if (!list_response.Blobs.empty()) {
+      const auto& blob = list_response.Blobs[0];
+      if (blob.Name == location.path) {
+        info.set_type(FileType::File);
+        info.set_size(blob.BlobSize);
+        info.set_mtime(std::chrono::system_clock::time_point{blob.Details.LastModified});
+        return info;
+      }
+    }
+    info.set_type(FileType::NotFound);
+    return info;
+  } catch (const Storage::StorageException& exception) {
+    if (IsContainerNotFound(exception)) {
+      return FileInfo{location.all, FileType::NotFound};
+    }
+    return ExceptionToStatus(
+        "ListBlobs for '" + *options.Prefix +
+            "' failed with an unexpected Azure error. GetFileInfo is unable to "
+            "determine whether the path should be considered an implied directory.",
+        exception);
+  }
+}
+// }}}
+
+// Operations using the Azure Data Lake Storage Gen 2 API {{{
+
+Result<FileInfo> GetFileInfo(DataLake::DataLakeFileSystemClient& adlfs_client,
+                             const AzureLocation& location) {
+  auto file_client = adlfs_client.GetFileClient(location.path);
+  try {
+    FileInfo info{location.all};
+    auto properties = file_client.GetProperties();
+    if (properties.Value.IsDirectory) {
+      info.set_type(FileType::Directory);
+    } else if (internal::HasTrailingSlash(location.path)) {
+      // For a path with a trailing slash a hierarchical namespace may return a blob
+      // with that trailing slash removed. For consistency with flat namespace and
+      // other filesystems we chose to return NotFound.
+      //
+      // NOTE(felipecrv): could this be an empty directory marker?
+      info.set_type(FileType::NotFound);
+      return info;
+    } else {
+      info.set_type(FileType::File);
+      info.set_size(properties.Value.FileSize);
+    }
+    info.set_mtime(std::chrono::system_clock::time_point{properties.Value.LastModified});
+    return info;
+  } catch (const Storage::StorageException& exception) {
+    if (exception.StatusCode == Http::HttpStatusCode::NotFound) {
+      return FileInfo{location.all, FileType::NotFound};
+    }
+    return ExceptionToStatus(
+        "GetProperties for '" + file_client.GetUrl() +
+            "' failed with an unexpected "
+            "Azure error. GetFileInfo is unable to determine whether the path exists.",
+        exception);
+  }
+}
+
+// }}}
 
 }  // namespace
 
@@ -962,71 +1048,17 @@ class AzureFileSystem::Impl {
       return GetContainerPropertiesAsFileInfo(location.container, container_client);
     }
     // There is a path to search within the container.
-    FileInfo info{location.all};
     auto adlfs_client = datalake_service_client_->GetFileSystemClient(location.container);
-    auto file_client = adlfs_client.GetFileClient(location.path);
-    try {
-      auto properties = file_client.GetProperties();
-      if (properties.Value.IsDirectory) {
-        info.set_type(FileType::Directory);
-      } else if (internal::HasTrailingSlash(location.path)) {
-        // For a path with a trailing slash a hierarchical namespace may return a blob
-        // with that trailing slash removed. For consistency with flat namespace and
-        // other filesystems we chose to return NotFound.
-        //
-        // NOTE(felipecrv): could this be an empty directory marker?
-        info.set_type(FileType::NotFound);
-        return info;
-      } else {
-        info.set_type(FileType::File);
-        info.set_size(properties.Value.FileSize);
-      }
-      info.set_mtime(
-          std::chrono::system_clock::time_point{properties.Value.LastModified});
-      return info;
-    } catch (const Storage::StorageException& exception) {
-      if (exception.StatusCode == Http::HttpStatusCode::NotFound) {
-        ARROW_ASSIGN_OR_RAISE(auto hns_support,
-                              HierarchicalNamespaceSupport(adlfs_client));
-        if (hns_support == HNSSupport::kContainerNotFound ||
-            hns_support == HNSSupport::kEnabled) {
-          // If the hierarchical namespace is enabled, then the storage account will
-          // have explicit directories. Neither a file nor a directory was found.
-          info.set_type(FileType::NotFound);
-          return info;
-        }
-        // On flat namespace accounts there are no real directories. Directories are only
-        // implied by using `/` in the blob name.
-        Blobs::ListBlobsOptions list_blob_options;
-        // If listing the prefix `path.path_to_file` with trailing slash returns at least
-        // one result then `path` refers to an implied directory.
-        list_blob_options.Prefix = internal::EnsureTrailingSlash(location.path);
-        // We only need to know if there is at least one result, so minimise page size
-        // for efficiency.
-        list_blob_options.PageSizeHint = 1;
-
-        try {
-          auto paged_list_result =
-              blob_service_client_->GetBlobContainerClient(location.container)
-                  .ListBlobs(list_blob_options);
-          auto file_type = paged_list_result.Blobs.size() > 0 ? FileType::Directory
-                                                              : FileType::NotFound;
-          info.set_type(file_type);
-          return info;
-        } catch (const Storage::StorageException& exception) {
-          return ExceptionToStatus(
-              "ListBlobs for '" + *list_blob_options.Prefix +
-                  "' failed with an unexpected Azure error. GetFileInfo is unable to "
-                  "determine whether the path should be considered an implied directory.",
-              exception);
-        }
-      }
-      return ExceptionToStatus(
-          "GetProperties for '" + file_client.GetUrl() +
-              "' failed with an unexpected "
-              "Azure error. GetFileInfo is unable to determine whether the path exists.",
-          exception);
+    ARROW_ASSIGN_OR_RAISE(auto hns_support, HierarchicalNamespaceSupport(adlfs_client));
+    if (hns_support == HNSSupport::kContainerNotFound) {
+      FileInfo info{location.all, FileType::NotFound};
     }
+    if (hns_support == HNSSupport::kEnabled) {
+      return arrow::fs::GetFileInfo(adlfs_client, location);
+    }
+    auto container_client =
+        blob_service_client_->GetBlobContainerClient(location.container);
+    return arrow::fs::GetFileInfo(container_client, location);
   }
 
  private:
