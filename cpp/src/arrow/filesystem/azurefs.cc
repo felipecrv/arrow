@@ -1009,6 +1009,96 @@ Status CreateDirOnContainer(Blobs::BlobContainerClient& container_client,
     return ExceptionToStatus(exception);
   }
 }
+
+/// This function CAN'T assume the filesystem/container already exists
+///
+/// \pre location.container is not empty.
+Status DeleteDirOnContainer(Blobs::BlobContainerClient& container_client,
+                            const AzureLocation& location, bool missing_dir_ok) {
+  DCHECK(!location.path.empty());
+  Blobs::ListBlobsOptions options;
+  if (!location.path.empty()) {
+    options.Prefix = internal::EnsureTrailingSlash(location.path);
+  }
+  // https://learn.microsoft.com/en-us/rest/api/storageservices/blob-batch#remarks
+  //
+  // Only supports up to 256 subrequests in a single batch. The
+  // size of the body for a batch request can't exceed 4 MB.
+  const int32_t kNumMaxRequestsInBatch = 256;
+  options.PageSizeHint = kNumMaxRequestsInBatch;
+  try {
+    auto list_response = container_client.ListBlobs(options);
+    if (!missing_dir_ok && list_response.Blobs.empty()) {
+      return PathNotFound(location);
+    }
+    for (; list_response.HasPage(); list_response.MoveToNextPage()) {
+      if (list_response.Blobs.empty()) {
+        continue;
+      }
+      auto batch = container_client.CreateBatch();
+      std::vector<Storage::DeferredResponse<Blobs::Models::DeleteBlobResult>>
+          deferred_responses;
+      for (const auto& blob_item : list_response.Blobs) {
+        deferred_responses.push_back(batch.DeleteBlob(blob_item.Name));
+      }
+      try {
+        container_client.SubmitBatch(batch);
+      } catch (const Storage::StorageException& exception) {
+        return ExceptionToStatus("Failed to delete blobs in a directory: " +
+                                     location.path + ": " + container_client.GetUrl(),
+                                 exception);
+      }
+      std::vector<std::string> failed_blob_names;
+      for (size_t i = 0; i < deferred_responses.size(); ++i) {
+        const auto& deferred_response = deferred_responses[i];
+        bool success = true;
+        try {
+          auto delete_result = deferred_response.GetResponse();
+          success = delete_result.Value.Deleted;
+        } catch (const Storage::StorageException& exception) {
+          success = false;
+        }
+        if (!success) {
+          const auto& blob_item = list_response.Blobs[i];
+          failed_blob_names.push_back(blob_item.Name);
+        }
+      }
+      if (!failed_blob_names.empty()) {
+        if (failed_blob_names.size() == 1) {
+          return Status::IOError("Failed to delete a blob: ", failed_blob_names[0],
+                                 ": " + container_client.GetUrl());
+        } else {
+          return Status::IOError("Failed to delete blobs: [",
+                                 arrow::internal::JoinStrings(failed_blob_names, ", "),
+                                 "]: " + container_client.GetUrl());
+        }
+      }
+    }
+  } catch (const Storage::StorageException& exception) {
+    return ExceptionToStatus("Failed to list blobs in a directory: " + location.path +
+                                 ": " + container_client.GetUrl(),
+                             exception);
+  }
+  return Status::OK();
+}
+
+/// \pre location.container is not empty.
+/// \pre The location.container already exists.
+Status EnsureEmptyDirExistsOnContainer(Blobs::BlobContainerClient& container_client,
+                                       const AzureLocation& location) {
+  if (location.path.empty()) {
+    // Nothing to do. The container already exists.
+    return Status::OK();
+  }
+  auto block_blob_client =
+      container_client.GetBlobClient(location.path + "/").AsBlockBlobClient();
+  try {
+    block_blob_client.UploadFrom(nullptr, 0);
+    return Status::OK();
+  } catch (const Storage::StorageException& exception) {
+    return ExceptionToStatus(exception);
+  }
+}
 // }}}
 
 // Operations using the Azure Data Lake Storage Gen 2 API {{{
@@ -1076,6 +1166,33 @@ Status CreateDirOnFilesystem(DataLake::DataLakeFileSystemClient& adlfs_client,
       }
     }
     return ExceptionToStatus(exception);
+  }
+}
+
+/// This function CAN'T assume the filesystem/container already exists.
+///
+/// \pre location.container is not empty.
+Status DeleteDirOnFilesystem(DataLake::DataLakeFileSystemClient& adlfs_client,
+                             const AzureLocation& location, bool missing_dir_ok) {
+  auto directory_client = adlfs_client.GetDirectoryClient(location.path);
+  try {
+    auto response = directory_client.DeleteRecursive();
+    if (response.Value.Deleted) {
+      return Status::OK();
+    } else {
+      if (missing_dir_ok) {
+        return Status::OK();
+      }
+      return StatusFromErrorResponse(directory_client.GetUrl(), *response.RawResponse,
+                                     "Failed to delete a directory: " + location.path);
+    }
+  } catch (const Storage::StorageException& exception) {
+    if (!missing_dir_ok && IsContainerNotFound(exception)) {
+      return PathNotFound(location);
+    }
+    return ExceptionToStatus("Failed to delete a directory: " + location.all + ": " +
+                                 directory_client.GetUrl(),
+                             exception);
   }
 }
 
@@ -1438,82 +1555,14 @@ class AzureFileSystem::Impl {
                                                        bool missing_dir_ok) {
     auto container_client =
         blob_service_client_->GetBlobContainerClient(location.container);
-    Blobs::ListBlobsOptions options;
-    if (!location.path.empty()) {
-      options.Prefix = internal::EnsureTrailingSlash(location.path);
-    }
-    // https://learn.microsoft.com/en-us/rest/api/storageservices/blob-batch#remarks
-    //
-    // Only supports up to 256 subrequests in a single batch. The
-    // size of the body for a batch request can't exceed 4 MB.
-    const int32_t kNumMaxRequestsInBatch = 256;
-    options.PageSizeHint = kNumMaxRequestsInBatch;
-    try {
-      auto list_response = container_client.ListBlobs(options);
-      if (!missing_dir_ok && list_response.Blobs.empty()) {
-        return PathNotFound(location);
-      }
-      for (; list_response.HasPage(); list_response.MoveToNextPage()) {
-        if (list_response.Blobs.empty()) {
-          continue;
-        }
-        auto batch = container_client.CreateBatch();
-        std::vector<Storage::DeferredResponse<Blobs::Models::DeleteBlobResult>>
-            deferred_responses;
-        for (const auto& blob_item : list_response.Blobs) {
-          deferred_responses.push_back(batch.DeleteBlob(blob_item.Name));
-        }
-        try {
-          container_client.SubmitBatch(batch);
-        } catch (const Storage::StorageException& exception) {
-          return ExceptionToStatus("Failed to delete blobs in a directory: " +
-                                       location.path + ": " + container_client.GetUrl(),
-                                   exception);
-        }
-        std::vector<std::string> failed_blob_names;
-        for (size_t i = 0; i < deferred_responses.size(); ++i) {
-          const auto& deferred_response = deferred_responses[i];
-          bool success = true;
-          try {
-            auto delete_result = deferred_response.GetResponse();
-            success = delete_result.Value.Deleted;
-          } catch (const Storage::StorageException& exception) {
-            success = false;
-          }
-          if (!success) {
-            const auto& blob_item = list_response.Blobs[i];
-            failed_blob_names.push_back(blob_item.Name);
-          }
-        }
-        if (!failed_blob_names.empty()) {
-          if (failed_blob_names.size() == 1) {
-            return Status::IOError("Failed to delete a blob: ", failed_blob_names[0],
-                                   ": " + container_client.GetUrl());
-          } else {
-            return Status::IOError("Failed to delete blobs: [",
-                                   arrow::internal::JoinStrings(failed_blob_names, ", "),
-                                   "]: " + container_client.GetUrl());
-          }
-        }
-      }
-    } catch (const Storage::StorageException& exception) {
-      return ExceptionToStatus("Failed to list blobs in a directory: " + location.path +
-                                   ": " + container_client.GetUrl(),
-                               exception);
-    }
-    return Status::OK();
+    RETURN_NOT_OK(DeleteDirOnContainer(container_client, location, missing_dir_ok));
+    return EnsureEmptyDirExistsOnContainer(container_client, location);
   }
 
  public:
   Status DeleteDir(const AzureLocation& location) {
     if (location.container.empty()) {
       return Status::Invalid("DeleteDir requires a non-empty path.");
-    }
-
-    auto adlfs_client = datalake_service_client_->GetFileSystemClient(location.container);
-    ARROW_ASSIGN_OR_RAISE(auto hns_support, HierarchicalNamespaceSupport(adlfs_client));
-    if (hns_support == HNSSupport::kContainerNotFound) {
-      return PathNotFound(location);
     }
 
     if (location.path.empty()) {
@@ -1529,32 +1578,26 @@ class AzureFileSystem::Impl {
               "Failed to delete a container: " + location.container);
         }
       } catch (const Storage::StorageException& exception) {
+        if (IsContainerNotFound(exception)) {
+          return PathNotFound(location);
+        }
         return ExceptionToStatus("Failed to delete a container: " + location.container +
                                      ": " + container_client.GetUrl(),
                                  exception);
       }
     }
 
-    if (hns_support == HNSSupport::kEnabled) {
-      auto directory_client = adlfs_client.GetDirectoryClient(location.path);
-      try {
-        auto response = directory_client.DeleteRecursive();
-        if (response.Value.Deleted) {
-          return Status::OK();
-        } else {
-          return StatusFromErrorResponse(
-              directory_client.GetUrl(), *response.RawResponse,
-              "Failed to delete a directory: " + location.path);
-        }
-      } catch (const Storage::StorageException& exception) {
-        return ExceptionToStatus("Failed to delete a directory: " + location.path + ": " +
-                                     directory_client.GetUrl(),
-                                 exception);
-      }
-    } else {
-      return DeleteDirContentsWithoutHierarchicalNamespace(location,
-                                                           /*missing_dir_ok=*/true);
+    auto adlfs_client = datalake_service_client_->GetFileSystemClient(location.container);
+    ARROW_ASSIGN_OR_RAISE(auto hns_support, HierarchicalNamespaceSupport(adlfs_client));
+    if (hns_support == HNSSupport::kContainerNotFound) {
+      return PathNotFound(location);
     }
+    if (hns_support == HNSSupport::kEnabled) {
+      return DeleteDirOnFilesystem(adlfs_client, location, /*missing_dir_ok=*/true);
+    }
+    auto container_client =
+        blob_service_client_->GetBlobContainerClient(location.container);
+    return DeleteDirOnContainer(container_client, location, /*missing_dir_ok=*/true);
   }
 
   Status DeleteDirContents(const AzureLocation& location, bool missing_dir_ok) {

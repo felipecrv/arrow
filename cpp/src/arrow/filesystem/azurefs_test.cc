@@ -528,7 +528,7 @@ class TestAzureFileSystem : public ::testing::Test {
     auto data = SetUpPreexistingData();
     const auto directory_path = data.RandomDirectoryPath(rng_);
 
-    if (WithHierarchicalNamespace()) {
+    if (WithHierarchicalNamespace() || true) {
       ASSERT_OK(fs_->CreateDir(directory_path, true));
       arrow::fs::AssertFileInfo(fs_.get(), directory_path, FileType::Directory);
       ASSERT_OK(fs_->DeleteDir(directory_path));
