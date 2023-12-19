@@ -218,7 +218,7 @@ struct AzureLocation {
 };
 
 Status ExceptionToStatus(const std::string& prefix,
-                         const Azure::Storage::StorageException& exception) {
+                         const Storage::StorageException& exception) {
   return Status::IOError(prefix, " Azure Error: ", exception.what());
 }
 
@@ -418,6 +418,15 @@ std::shared_ptr<const KeyValueMetadata> PropertiesToMetadata(
   return metadata;
 }
 
+Storage::Metadata ArrowMetadataToAzureMetadata(
+    const std::shared_ptr<const KeyValueMetadata>& arrow_metadata) {
+  Storage::Metadata azure_metadata;
+  for (auto key_value : arrow_metadata->sorted_pairs()) {
+    azure_metadata[key_value.first] = key_value.second;
+  }
+  return azure_metadata;
+}
+
 class ObjectInputFile final : public io::RandomAccessFile {
  public:
   ObjectInputFile(std::shared_ptr<Blobs::BlobClient> blob_client,
@@ -598,15 +607,6 @@ Result<Blobs::Models::GetBlockListResult> GetBlockList(
             "fetching the existing block list.",
         exception);
   }
-}
-
-Storage::Metadata ArrowMetadataToAzureMetadata(
-    const std::shared_ptr<const KeyValueMetadata>& arrow_metadata) {
-  Storage::Metadata azure_metadata;
-  for (auto key_value : arrow_metadata->sorted_pairs()) {
-    azure_metadata[key_value.first] = key_value.second;
-  }
-  return azure_metadata;
 }
 
 Status CommitBlockList(std::shared_ptr<Storage::Blobs::BlockBlobClient> block_blob_client,
