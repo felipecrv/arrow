@@ -1507,7 +1507,7 @@ class AzureFileSystem::Impl {
  public:
   Status DeleteDir(const AzureLocation& location) {
     if (location.container.empty()) {
-      return Status::Invalid("Cannot delete an empty container");
+      return Status::Invalid("DeleteDir requires a non-empty path.");
     }
 
     auto adlfs_client = datalake_service_client_->GetFileSystemClient(location.container);
