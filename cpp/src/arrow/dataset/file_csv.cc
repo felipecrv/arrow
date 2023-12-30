@@ -28,6 +28,7 @@
 #include "arrow/csv/parser.h"
 #include "arrow/csv/reader.h"
 #include "arrow/csv/writer.h"
+#include "arrow/dataset/dataset.h"
 #include "arrow/dataset/dataset_internal.h"
 #include "arrow/dataset/file_base.h"
 #include "arrow/dataset/type_fwd.h"
@@ -52,8 +53,6 @@ using internal::Executor;
 using internal::SerialExecutor;
 
 namespace dataset {
-
-using RecordBatchGenerator = std::function<Future<std::shared_ptr<RecordBatch>>()>;
 
 namespace {
 
