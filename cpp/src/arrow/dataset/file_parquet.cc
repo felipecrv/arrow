@@ -433,8 +433,8 @@ bool ParquetFileFormat::Equals(const FileFormat& other) const {
               other_reader_options.coerce_int96_timestamp_unit);
 }
 
-ParquetFileFormat::ParquetFileFormat(const parquet::ReaderProperties& reader_properties)
-    : ParquetFileFormat(std::make_unique<parquet::ReaderProperties>(reader_properties)) {}
+// ParquetFileFormat::ParquetFileFormat(const parquet::ReaderProperties& reader_properties)
+//     : ParquetFileFormat(std::make_unique<parquet::ReaderProperties>(reader_properties)) {}
 
 ParquetFileFormat::ParquetFileFormat(
     std::unique_ptr<parquet::ReaderProperties>&& reader_properties)

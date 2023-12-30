@@ -73,7 +73,7 @@ class ARROW_DS_EXPORT ParquetFileFormat : public FileFormat {
 
   /// Convenience constructor which copies properties from a parquet::ReaderProperties.
   /// memory_pool will be ignored.
-  explicit ParquetFileFormat(const parquet::ReaderProperties& reader_properties);
+  // explicit ParquetFileFormat(const parquet::ReaderProperties& reader_properties);
 
   /// Convenience constructor which takes a heap-allocated parquet::ReaderProperties.
   /// memory_pool will be ignored.
