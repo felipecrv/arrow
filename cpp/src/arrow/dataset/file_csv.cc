@@ -53,6 +53,10 @@ using internal::SerialExecutor;
 
 namespace dataset {
 
+using RecordBatchGenerator = std::function<Future<std::shared_ptr<RecordBatch>>()>;
+
+namespace {
+
 struct CsvInspectedFragment : public InspectedFragment {
   CsvInspectedFragment(std::vector<std::string> column_names,
                        std::shared_ptr<io::InputStream> input_stream, int64_t num_bytes)
@@ -142,14 +146,12 @@ class CsvFileScanner : public FragmentScanner {
   int scanned_so_far_ = 0;
 };
 
-using RecordBatchGenerator = std::function<Future<std::shared_ptr<RecordBatch>>()>;
-
 Result<std::vector<std::string>> GetOrderedColumnNames(
     const csv::ReadOptions& read_options, const csv::ParseOptions& parse_options,
     std::string_view first_block, MemoryPool* pool) {
   // Skip BOM when reading column names (ARROW-14644, ARROW-17382)
   auto size = first_block.length();
-  const uint8_t* data = reinterpret_cast<const uint8_t*>(first_block.data());
+  const auto* data = reinterpret_cast<const uint8_t*>(first_block.data());
   ARROW_ASSIGN_OR_RAISE(auto data_no_bom, util::SkipUTF8BOM(data, size));
   size = size - static_cast<uint32_t>(data_no_bom - data);
   first_block = std::string_view(reinterpret_cast<const char*>(data_no_bom), size);
@@ -211,9 +213,9 @@ Result<std::unordered_set<std::string>> GetColumnNames(
   return unordered_names;
 }
 
-static inline Result<csv::ConvertOptions> GetConvertOptions(
-    const CsvFileFormat& format, const ScanOptions* scan_options,
-    const std::string_view first_block) {
+inline Result<csv::ConvertOptions> GetConvertOptions(const CsvFileFormat& format,
+                                                     const ScanOptions* scan_options,
+                                                     const std::string_view first_block) {
   ARROW_ASSIGN_OR_RAISE(
       auto csv_scan_options,
       GetFragmentScanOptions<CsvFragmentScanOptions>(
@@ -261,7 +263,7 @@ static inline Result<csv::ConvertOptions> GetConvertOptions(
   return convert_options;
 }
 
-static inline Result<csv::ReadOptions> GetReadOptions(
+inline Result<csv::ReadOptions> GetReadOptions(
     const CsvFileFormat& format, const std::shared_ptr<ScanOptions>& scan_options) {
   ARROW_ASSIGN_OR_RAISE(
       auto csv_scan_options,
@@ -275,7 +277,7 @@ static inline Result<csv::ReadOptions> GetReadOptions(
   return read_options;
 }
 
-static inline Future<std::shared_ptr<csv::StreamingReader>> OpenReaderAsync(
+inline Future<std::shared_ptr<csv::StreamingReader>> OpenReaderAsync(
     const FileSource& source, const CsvFileFormat& format,
     const std::shared_ptr<ScanOptions>& scan_options, Executor* cpu_executor) {
 #ifdef ARROW_WITH_OPENTELEMETRY
@@ -329,7 +331,7 @@ static inline Future<std::shared_ptr<csv::StreamingReader>> OpenReaderAsync(
       });
 }
 
-static inline Result<std::shared_ptr<csv::StreamingReader>> OpenReader(
+inline Result<std::shared_ptr<csv::StreamingReader>> OpenReader(
     const FileSource& source, const CsvFileFormat& format,
     const std::shared_ptr<ScanOptions>& scan_options = nullptr) {
   auto open_reader_fut = OpenReaderAsync(source, format, scan_options,
@@ -337,7 +339,7 @@ static inline Result<std::shared_ptr<csv::StreamingReader>> OpenReader(
   return open_reader_fut.result();
 }
 
-static RecordBatchGenerator GeneratorFromReader(
+RecordBatchGenerator GeneratorFromReader(
     const Future<std::shared_ptr<csv::StreamingReader>>& reader, int64_t batch_size) {
   auto gen_fut = reader.Then(
       [batch_size](
@@ -347,6 +349,8 @@ static RecordBatchGenerator GeneratorFromReader(
       });
   return MakeFromFuture(std::move(gen_fut));
 }
+
+}  // namespace
 
 CsvFileFormat::CsvFileFormat() : FileFormat(std::make_shared<CsvFragmentScanOptions>()) {}
 
