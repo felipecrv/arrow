@@ -262,12 +262,9 @@ inline Result<csv::ConvertOptions> GetConvertOptions(const CsvFileFormat& format
   return convert_options;
 }
 
-inline Result<csv::ReadOptions> GetReadOptions(
-    const CsvFileFormat& format, const std::shared_ptr<ScanOptions>& scan_options) {
-  ARROW_ASSIGN_OR_RAISE(
-      auto csv_scan_options,
-      GetFragmentScanOptions<CsvFragmentScanOptions>(
-          kCsvTypeName, scan_options.get(), format.default_fragment_scan_options));
+inline csv::ReadOptions GetReadOptions(
+    const std::shared_ptr<ScanOptions>& scan_options,
+    const std::shared_ptr<CsvFragmentScanOptions>& csv_scan_options) {
   auto read_options = csv_scan_options->read_options;
   // Multithreaded conversion of individual files would lead to excessive thread
   // contention when ScanTasks are also executed in multiple threads, so we disable it
@@ -287,7 +284,7 @@ inline Future<std::shared_ptr<csv::StreamingReader>> OpenReaderAsync(
       auto fragment_scan_options,
       GetFragmentScanOptions<CsvFragmentScanOptions>(
           kCsvTypeName, scan_options.get(), format.default_fragment_scan_options));
-  ARROW_ASSIGN_OR_RAISE(auto reader_options, GetReadOptions(format, scan_options));
+  auto reader_options = GetReadOptions(scan_options, fragment_scan_options);
   ARROW_ASSIGN_OR_RAISE(auto input, source.OpenCompressed());
   if (fragment_scan_options->stream_transform_func) {
     ARROW_ASSIGN_OR_RAISE(input, fragment_scan_options->stream_transform_func(input));
@@ -403,7 +400,7 @@ Future<std::optional<int64_t>> CsvFileFormat::CountRows(
       auto fragment_scan_options,
       GetFragmentScanOptions<CsvFragmentScanOptions>(
           kCsvTypeName, options.get(), self->default_fragment_scan_options));
-  ARROW_ASSIGN_OR_RAISE(auto read_options, GetReadOptions(*self, options));
+  auto read_options = GetReadOptions(options, fragment_scan_options);
   ARROW_ASSIGN_OR_RAISE(auto input, file->source().OpenCompressed());
   if (fragment_scan_options->stream_transform_func) {
     ARROW_ASSIGN_OR_RAISE(input, fragment_scan_options->stream_transform_func(input));
