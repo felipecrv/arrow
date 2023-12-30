@@ -75,6 +75,11 @@ class ARROW_DS_EXPORT ParquetFileFormat : public FileFormat {
   /// memory_pool will be ignored.
   explicit ParquetFileFormat(const parquet::ReaderProperties& reader_properties);
 
+  /// Convenience constructor which takes a heap-allocated parquet::ReaderProperties.
+  /// memory_pool will be ignored.
+  explicit ParquetFileFormat(
+      std::unique_ptr<parquet::ReaderProperties>&& reader_properties);
+
   std::string type_name() const override { return kParquetTypeName; }
 
   bool Equals(const FileFormat& other) const override;
@@ -219,7 +224,11 @@ class ARROW_DS_EXPORT ParquetFileFragment : public FileFragment {
 /// \brief Per-scan options for Parquet fragments
 class ARROW_DS_EXPORT ParquetFragmentScanOptions : public FragmentScanOptions {
  public:
-  ParquetFragmentScanOptions();
+  explicit ParquetFragmentScanOptions(
+      std::unique_ptr<parquet::ReaderProperties>&& reader_properties = NULLPTR,
+      std::unique_ptr<parquet::ArrowReaderProperties>&& arrow_reader_properties = NULLPTR,
+      std::unique_ptr<ParquetDecryptionConfig>&& parquet_decryption_config = NULLPTR);
+
   std::string type_name() const override { return kParquetTypeName; }
 
   /// Reader properties. Not all properties are respected: memory_pool comes from

@@ -434,11 +434,12 @@ bool ParquetFileFormat::Equals(const FileFormat& other) const {
 }
 
 ParquetFileFormat::ParquetFileFormat(const parquet::ReaderProperties& reader_properties)
-    : FileFormat(std::make_shared<ParquetFragmentScanOptions>()) {
-  auto* default_scan_opts =
-      static_cast<ParquetFragmentScanOptions*>(default_fragment_scan_options.get());
-  *default_scan_opts->reader_properties = reader_properties;
-}
+    : ParquetFileFormat(std::make_unique<parquet::ReaderProperties>(reader_properties)) {}
+
+ParquetFileFormat::ParquetFileFormat(
+    std::unique_ptr<parquet::ReaderProperties>&& reader_properties)
+    : FileFormat(
+          std::make_unique<ParquetFragmentScanOptions>(std::move(reader_properties))) {}
 
 Result<bool> ParquetFileFormat::IsSupported(const FileSource& source) const {
   auto maybe_is_supported = IsSupportedParquetFile(*this, source);
@@ -952,10 +953,23 @@ Result<std::optional<int64_t>> ParquetFileFragment::TryCountRows(
 // ParquetFragmentScanOptions
 //
 
-ParquetFragmentScanOptions::ParquetFragmentScanOptions() {
-  reader_properties = std::make_shared<parquet::ReaderProperties>();
-  arrow_reader_properties =
-      std::make_shared<parquet::ArrowReaderProperties>(/*use_threads=*/false);
+ParquetFragmentScanOptions::ParquetFragmentScanOptions(
+    std::unique_ptr<parquet::ReaderProperties>&& reader_properties,
+    std::unique_ptr<parquet::ArrowReaderProperties>&& arrow_reader_properties,
+    std::unique_ptr<ParquetDecryptionConfig>&& parquet_decryption_config)
+    : reader_properties(std::move(reader_properties)),
+      arrow_reader_properties(std::move(arrow_reader_properties)),
+      parquet_decryption_config(std::move(parquet_decryption_config)) {
+  // reader_properties is non-nullable
+  if (this->reader_properties == nullptr) {
+    this->reader_properties = std::make_shared<parquet::ReaderProperties>();
+  }
+  // arrow_reader_properties is non-nullable
+  if (this->arrow_reader_properties == nullptr) {
+    this->arrow_reader_properties =
+        std::make_shared<parquet::ArrowReaderProperties>(/*use_threads=*/false);
+  }
+  // parquet_decryption_config is allowed to be NULLPTR.
 }
 
 //
