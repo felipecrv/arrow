@@ -40,10 +40,13 @@ struct ARROW_EXPORT ChunkResolver {
   explicit ChunkResolver(const RecordBatchVector& batches);
 
   ChunkResolver(ChunkResolver&& other) noexcept
-      : offsets_(std::move(other.offsets_)), cached_chunk_(other.cached_chunk_.load()) {}
+      : offsets_(std::move(other.offsets_)),
+        max_index_(other.max_index_),
+        cached_chunk_(other.cached_chunk_.load()) {}
 
   ChunkResolver& operator=(ChunkResolver&& other) {
     offsets_ = std::move(other.offsets_);
+    max_index_ = other.max_index_;
     cached_chunk_.store(other.cached_chunk_.load());
     return *this;
   }
@@ -57,9 +60,14 @@ struct ARROW_EXPORT ChunkResolver {
     // This is trivial when merging (assuming each side of the merge uses
     // its own resolver), but also in the inner recursive invocations of
     // partitioning.
+    if (index < 0 || index >= max_index_) {
+      return {-1, -1};
+    }
+
     if (offsets_.size() <= 1) {
       return {0, index};
     }
+
     const auto cached_chunk = cached_chunk_.load();
     const bool cache_hit =
         (index >= offsets_[cached_chunk] && index < offsets_[cached_chunk + 1]);
@@ -94,6 +102,9 @@ struct ARROW_EXPORT ChunkResolver {
  private:
   // Collection of starting offsets used for binary search
   std::vector<int64_t> offsets_;
+
+  // Latest valid index
+  int64_t max_index_;
 
   // Tracks the most recently used chunk index to allow fast
   // access for consecutive indices corresponding to the same chunk

@@ -24,6 +24,7 @@
 #include "arrow/array/builder_primitive.h"
 #include "arrow/array/concatenate.h"
 #include "arrow/buffer_builder.h"
+#include "arrow/chunk_resolver.h"
 #include "arrow/chunked_array.h"
 #include "arrow/compute/api_vector.h"
 #include "arrow/compute/kernels/codegen_internal.h"
@@ -39,6 +40,7 @@
 #include "arrow/util/bit_util.h"
 #include "arrow/util/int_util.h"
 #include "arrow/util/ree_util.h"
+#include "arrow/util/unreachable.h"
 
 namespace arrow {
 
@@ -46,6 +48,8 @@ using internal::BinaryBitBlockCounter;
 using internal::BitBlockCount;
 using internal::BitBlockCounter;
 using internal::CheckIndexBounds;
+using internal::ChunkLocation;
+using internal::ChunkResolver;
 using internal::OptionalBitBlockCounter;
 
 namespace compute {
@@ -658,31 +662,136 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
                                              const TakeOptions& options,
                                              ExecContext* ctx) {
   auto num_chunks = values.num_chunks();
-  std::shared_ptr<Array> current_chunk;
+  auto num_indices = indices.length();
 
-  // Case 1: `values` has a single chunk, so just use it
-  if (num_chunks == 1) {
-    current_chunk = values.chunk(0);
-  } else {
-    // TODO Case 2: See if all `indices` fall in the same chunk and call Array Take on it
-    // See
-    // https://github.com/apache/arrow/blob/6f2c9041137001f7a9212f244b51bc004efc29af/r/src/compute.cpp#L123-L151
-    // TODO Case 3: If indices are sorted, can slice them and call Array Take
-
-    // Case 4: Else, concatenate chunks and call Array Take
+  if (indices.length() == 0) {
+    // Case 0: No indices were provided, nothing to take so return an empty chunked array
+    return ChunkedArray::MakeEmpty(values.type());
+  } else if (num_chunks < 2) {
+    std::shared_ptr<Array> current_chunk;
+    // Case 1: `values` is empty or has a single chunk, so just use it
     if (values.chunks().empty()) {
       ARROW_ASSIGN_OR_RAISE(current_chunk, MakeArrayOfNull(values.type(), /*length=*/0,
                                                            ctx->memory_pool()));
     } else {
-      ARROW_ASSIGN_OR_RAISE(current_chunk,
-                            Concatenate(values.chunks(), ctx->memory_pool()));
+      current_chunk = values.chunk(0);
     }
+    // Call Array Take on our single chunk
+    ARROW_ASSIGN_OR_RAISE(std::shared_ptr<ArrayData> new_chunk,
+                          TakeAA(current_chunk->data(), indices.data(), options, ctx));
+    std::vector<std::shared_ptr<Array>> chunks = {MakeArray(new_chunk)};
+    return std::make_shared<ChunkedArray>(std::move(chunks));
+  } else {
+    // For each index, lookup at which chunk it refers to.
+    // We have to do this because the indices are not necessarily sorted.
+    // So we can't simply iterate over chunks and pick the slices we need.
+    std::vector<Int64Builder> builders(num_chunks);
+    std::vector<int64_t> indices_chunks(num_indices);
+    const void* indices_raw_data;  // Use Raw data to avoid invoking .Value() on indices
+    auto indices_type_id = indices.type()->id();
+    switch (indices_type_id) {
+      case Type::UINT8:
+      case Type::INT8:
+        indices_raw_data = static_cast<UInt8Array const&>(indices).raw_values();
+        break;
+      case Type::UINT16:
+      case Type::INT16:
+        indices_raw_data = static_cast<UInt16Array const&>(indices).raw_values();
+        break;
+      case Type::UINT32:
+      case Type::INT32:
+        indices_raw_data = static_cast<UInt32Array const&>(indices).raw_values();
+        break;
+      case Type::UINT64:
+      case Type::INT64:
+        indices_raw_data = static_cast<UInt64Array const&>(indices).raw_values();
+        break;
+      default:
+        DCHECK(false) << "Invalid indices types " << indices.type()->ToString();
+        break;
+    }
+
+    ChunkResolver index_resolver(values.chunks());
+    for (int64_t requested_index = 0; requested_index < num_indices; ++requested_index) {
+      uint64_t index = 0;
+      switch (indices_type_id) {
+        case Type::UINT8:
+        case Type::INT8:
+          index = static_cast<uint8_t const*>(indices_raw_data)[requested_index];
+          break;
+        case Type::UINT16:
+        case Type::INT16:
+          index = static_cast<uint16_t const*>(indices_raw_data)[requested_index];
+          break;
+        case Type::UINT32:
+        case Type::INT32:
+          index = static_cast<uint32_t const*>(indices_raw_data)[requested_index];
+          break;
+        case Type::UINT64:
+        case Type::INT64:
+          index = static_cast<uint64_t const*>(indices_raw_data)[requested_index];
+          break;
+        default:
+          DCHECK(false) << "Invalid indices types " << indices.type()->ToString();
+          break;
+      }
+
+      ChunkLocation resolved_index = index_resolver.Resolve(index);
+      int64_t chunk_index = resolved_index.chunk_index;
+      if (chunk_index < 0) {
+        // ChunkResolver doesn't throw errors when the index is out of bounds
+        // it will just return a chunk index that doesn't exist.
+        return Status::IndexError("Index ", index, " is out of bounds");
+      }
+      indices_chunks[requested_index] = chunk_index;
+      ARROW_RETURN_NOT_OK(builders[chunk_index].Append(resolved_index.index_in_chunk));
+    }
+
+    // Take from the various chunks only the values we actually care about.
+    // We first gather all values using Take and then we slice the resulting
+    // arrays with the values to create the actual resulting chunks
+    // as that is orders of magnitude faster than calling Take multiple times.
+    std::vector<std::shared_ptr<arrow::Array>> looked_up_values(num_chunks);
+    for (int i = 0; i < num_chunks; ++i) {
+      if (builders[i].length() == 0) {
+        // No indices refer to this chunk, so we can skip it
+        continue;
+      }
+      std::shared_ptr<Int64Array> indices_array;
+      ARROW_RETURN_NOT_OK(builders[i].Finish(&indices_array));
+      std::shared_ptr<ArrayData> looked_up_values_data;
+      ARROW_ASSIGN_OR_RAISE(
+          looked_up_values_data,
+          TakeAA(values.chunk(i)->data(), indices_array->data(), options, ctx));
+      looked_up_values[i] = MakeArray(looked_up_values_data);
+    }
+
+    // Slice the arrays with the values to create the new chunked array out of them
+    std::vector<std::shared_ptr<arrow::Array>> new_chunks;
+    std::vector<int64_t> consumed_chunk_offset(num_chunks, 0);
+    int64_t current_chunk = indices_chunks[0];
+    int64_t current_length = 0;
+    for (int64_t requested_index = 0; requested_index < num_indices; ++requested_index) {
+      int64_t chunk_index = indices_chunks[requested_index];
+      if (chunk_index != current_chunk) {
+        new_chunks.push_back(looked_up_values[current_chunk]->Slice(
+            consumed_chunk_offset[current_chunk], current_length));
+        consumed_chunk_offset[current_chunk] += current_length;
+        current_chunk = chunk_index;
+        current_length = 0;
+      }
+      ++current_length;
+    }
+    if (current_length > 0) {
+      // Remaining values in last chunk
+      new_chunks.push_back(looked_up_values[current_chunk]->Slice(
+          consumed_chunk_offset[current_chunk], current_length));
+    }
+
+    auto chunked_array =
+        std::make_shared<arrow::ChunkedArray>(std::move(new_chunks), values.type());
+    return chunked_array;
   }
-  // Call Array Take on our single chunk
-  ARROW_ASSIGN_OR_RAISE(std::shared_ptr<ArrayData> new_chunk,
-                        TakeAA(current_chunk->data(), indices.data(), options, ctx));
-  std::vector<std::shared_ptr<Array>> chunks = {MakeArray(new_chunk)};
-  return std::make_shared<ChunkedArray>(std::move(chunks));
 }
 
 Result<std::shared_ptr<ChunkedArray>> TakeCC(const ChunkedArray& values,
