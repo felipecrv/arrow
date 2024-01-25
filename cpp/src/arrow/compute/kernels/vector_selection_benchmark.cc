@@ -17,6 +17,7 @@
 
 #include "benchmark/benchmark.h"
 
+#include <cmath>
 #include <cstdint>
 #include <sstream>
 
@@ -148,6 +149,43 @@ struct TakeBenchmark {
 
     for (auto _ : state) {
       ABORT_NOT_OK(Take(values, indices).status());
+    }
+  }
+
+  // A high enough number of chunks to exercise cache-line locality effects
+  // of arrays of 64-bit array chunk offsets.
+  int64_t kNumChunks = 30;
+
+  void ChunkedInt64() {
+    const double expected_total_length = static_cast<double>(args.size) / sizeof(int64_t);
+    int64_t sum_of_lengths = 0;
+    ArrayVector chunks;
+    for (int64_t i = 0; i < kNumChunks; ++i) {
+      const int64_t chunk_length =
+          std::floor((expected_total_length - sum_of_lengths) / (kNumChunks - i));
+      chunks.push_back(rand.Int64(chunk_length, -100, 100, args.null_proportion));
+      sum_of_lengths += chunk_length;
+    }
+    auto chunked_array = std::make_shared<ChunkedArray>(std::move(chunks));
+    DCHECK_EQ(sum_of_lengths, chunked_array->length());
+    DCHECK_LE(sum_of_lengths, expected_total_length);
+    BenchChunked(chunked_array);
+  }
+
+  void BenchChunked(const std::shared_ptr<ChunkedArray>& values) {
+    double indices_null_proportion = indices_have_nulls ? args.null_proportion : 0;
+    auto indices =
+        rand.Int32(values->length(), 0, static_cast<int32_t>(values->length() - 1),
+                   indices_null_proportion);
+    Datum indices_datum{indices};
+    if (monotonic_indices) {
+      std::shared_ptr<Array> arg_sorter = *SortIndices(*indices);
+      indices_datum = *Take(indices_datum, Datum(arg_sorter));
+    }
+    Datum values_datum{std::move(values)};
+
+    for (auto _ : state) {
+      ABORT_NOT_OK(Take(values_datum, indices_datum).status());
     }
   }
 };
@@ -307,6 +345,18 @@ static void TakeStringMonotonicIndices(benchmark::State& state) {
   TakeBenchmark(state, /*indices_with_nulls=*/false, /*monotonic=*/true).FSLInt64();
 }
 
+static void TakeChunkedInt64RandomIndicesNoNulls(benchmark::State& state) {
+  TakeBenchmark(state, false).ChunkedInt64();
+}
+
+static void TakeChunkedInt64RandomIndicesWithNulls(benchmark::State& state) {
+  TakeBenchmark(state, true).ChunkedInt64();
+}
+
+static void TakeChunkedInt64MonotonicIndices(benchmark::State& state) {
+  TakeBenchmark(state, /*indices_with_nulls=*/false, /*monotonic=*/true).ChunkedInt64();
+}
+
 void FilterSetArgs(benchmark::internal::Benchmark* bench) {
   for (int64_t size : g_data_sizes) {
     for (int i = 0; i < static_cast<int>(g_filter_params.size()); ++i) {
@@ -349,6 +399,9 @@ BENCHMARK(TakeFSLInt64MonotonicIndices)->Apply(TakeSetArgs);
 BENCHMARK(TakeStringRandomIndicesNoNulls)->Apply(TakeSetArgs);
 BENCHMARK(TakeStringRandomIndicesWithNulls)->Apply(TakeSetArgs);
 BENCHMARK(TakeStringMonotonicIndices)->Apply(TakeSetArgs);
+BENCHMARK(TakeChunkedInt64RandomIndicesNoNulls)->Apply(TakeSetArgs);
+BENCHMARK(TakeChunkedInt64RandomIndicesWithNulls)->Apply(TakeSetArgs);
+BENCHMARK(TakeChunkedInt64MonotonicIndices)->Apply(TakeSetArgs);
 
 }  // namespace compute
 }  // namespace arrow
