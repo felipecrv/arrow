@@ -1737,6 +1737,12 @@ TEST_F(TestTakeKernelWithChunkedArray, TakeChunkedArray) {
   this->AssertChunkedTake(int8(), {"[7]", "[8, 9]"}, {"[0, 1, 0]", "[]", "[2]"},
                           {"[7, 8, 7]", "[]", "[9]"});
   this->AssertTake(int8(), {"[7]", "[8, 9]"}, "[2, 1]", {"[9, 8]"});
+  this->AssertChunkedTake(boolean(), {"[true]", "[false, true]"},
+                          {"[0, 1, 0]", "[]", "[2]"},
+                          {"[true, false, true]", "[]", "[true]"});
+  this->AssertChunkedTake(int32(), {"[7, null]", "[8, 9, 10]", "[21, null, 42]"},
+                          {"[2, 1]", "[7, 6, 6, 4]"},
+                          {"[8, null]", "[42, null, null, 10]"});
 
   std::shared_ptr<ChunkedArray> arr;
   ASSERT_RAISES(IndexError,
