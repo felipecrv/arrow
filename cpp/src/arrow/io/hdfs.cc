@@ -285,8 +285,13 @@ class HdfsOutputStream::HdfsOutputStreamImpl : public HdfsAnyFileImpl {
 
   Status Flush() {
     RETURN_NOT_OK(CheckClosed());
-
     return FlushInternal();
+  }
+
+  Status Sync() {
+    RETURN_NOT_OK(CheckClosed());
+      return Status::Invalid(
+          "Cannot call Writable::Sync() when there is data to Flush()");
   }
 
   Status Write(const uint8_t* buffer, int64_t nbytes) {
@@ -329,6 +334,8 @@ Status HdfsOutputStream::Write(const void* buffer, int64_t nbytes) {
 }
 
 Status HdfsOutputStream::Flush() { return impl_->Flush(); }
+
+Status HdfsOutputStream::DurableSync() { return impl_->Sync(); }
 
 Result<int64_t> HdfsOutputStream::Tell() const { return impl_->Tell(); }
 

@@ -131,6 +131,7 @@ class CompressedOutputStream::Impl {
     return Status::OK();
   }
 
+ private:
   Status FinalizeCompression() {
     while (true) {
       // Try to end compressor
@@ -151,6 +152,28 @@ class CompressedOutputStream::Impl {
       }
     }
     return Status::OK();
+  }
+
+ public:
+  Status DurableSync() {
+    std::lock_guard<std::mutex> guard(lock_);
+
+    // We expect users to call Flush() long before DurableSync() is called to avoid
+    // latency issues (i.e. DurableSync() being much more likely to block for too long as
+    // the kernel is forced to deal with data it hasn't been given a chance to commit
+    // yet).
+    //
+    // Since this class can be used by more than one thread, it might be hard to
+    // guarantee that by the time DurableSync() is called, another thread hasn't written
+    // data that hasn't been flushed yet. A user that cares about DurableSync() should
+    // have their own concurrency control mechanism to ensure there is no pending data to
+    // flush by the time DurableSync() is called.
+    const int64_t output_len = compressed_->size() - compressed_pos_;
+    if (output_len > 0) {
+      return Status::Invalid(
+          "Cannot call Writable::DurableSync() when there is data to Flush()");
+    }
+    return raw_->DurableSync();
   }
 
   Status Close() {
@@ -221,6 +244,7 @@ Status CompressedOutputStream::Write(const void* data, int64_t nbytes) {
 }
 
 Status CompressedOutputStream::Flush() { return impl_->Flush(); }
+Status CompressedOutputStream::DurableSync() { return impl_->DurableSync(); }
 
 std::shared_ptr<OutputStream> CompressedOutputStream::raw() const { return impl_->raw(); }
 

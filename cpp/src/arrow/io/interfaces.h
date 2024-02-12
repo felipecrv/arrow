@@ -168,10 +168,50 @@ class ARROW_EXPORT Writable {
   /// buffering is required.  See Write(const void*, int64_t) for details.
   virtual Status Write(const std::shared_ptr<Buffer>& data);
 
+  Status Write(std::string_view data);
+
   /// \brief Flush buffered bytes, if any
   virtual Status Flush();
 
-  Status Write(std::string_view data);
+  /// \brief At a high latency cost, ensure that any data still not committed by
+  /// the underlying storage system (e.g. OS kernel) is committed to stable storage
+  /// before returning
+  ///
+  /// Operating Systems do not immediately commit data provided by user-land code into
+  /// storage devices. This is usually NOT A PROBLEM because:
+  /// 1. The kernel will not take very long to asynchronously commit the data on its own
+  /// 2. The kernel mediates access to the file system and guarantees all processes sees
+  ///    the writes performed to the same file so far
+  /// 3. Most applications can handle missing data due to power loss or kernel crashes
+  ///    without this (e.g. a file used for caching getting corrupted can be
+  ///    re-downloaded)
+  ///
+  /// DurableSync() is not a replacement to Flush(). Flush() is for ensuring that the data
+  /// buffered in this object instance is written to the underlying file (potentially
+  /// asynchronously), while DurableSync() is for blocking until data that would be
+  /// eventually written to the underlying storage is committed immediately.
+  ///
+  /// DurableSync() should not call Flush(). It's considered invalid to call DurableSync()
+  /// when there is pending data to Flush() and implementations should check for that and
+  /// return a Status::Invalid. The reason is that DurableSync() is much more likely to
+  /// block for longer if it's called immediately after Write()/Flush(). For instance:
+  /// users performing writes on multiple Writable instances would benefit from
+  /// calling Write()/Flush() on all the Writable instances before they start calling
+  /// DurableSync() on the first Writable of the list. This increases the chances of
+  /// DurableSync() returning immediately because the kernel had enough time to commit the
+  /// data to stable storage on its own while the other operations were being performed.
+  ///
+  /// NOTE: Calling this IS NOT a requirement for the data to be eventually committed to
+  /// stable storage. It is only a way to communicate to the kernel that the application
+  /// would like the data to be committed to storage media now and accepts the latency
+  /// that comes with it -- potentially multiple 100s of milliseconds (~700ms).
+  ///
+  /// In the context of distributed storage systems, or file system abstractions
+  /// based on object stores, DurableSync() can be used to perform operations
+  /// that ensures the writes so far are strongly consistent and visible to all
+  /// other readers (e.g. by requiring replication to other nodes before
+  /// returning).
+  virtual Status DurableSync() = 0;
 };
 
 class ARROW_EXPORT Readable {

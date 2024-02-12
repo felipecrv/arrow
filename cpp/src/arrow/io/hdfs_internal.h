@@ -70,6 +70,7 @@ struct LibHdfsShim {
                      tSize length);
   tSize (*hdfsWrite)(hdfsFS fs, hdfsFile file, const void* buffer, tSize length);
   int (*hdfsFlush)(hdfsFS fs, hdfsFile file);
+  int (*hdfsSync)(hdfsFS fs, hdfsFile file);
   int (*hdfsAvailable)(hdfsFS fs, hdfsFile file);
   int (*hdfsCopy)(hdfsFS srcFS, const char* src, hdfsFS dstFS, const char* dst);
   int (*hdfsMove)(hdfsFS srcFS, const char* src, hdfsFS dstFS, const char* dst);
@@ -171,6 +172,8 @@ struct LibHdfsShim {
   tSize Write(hdfsFS fs, hdfsFile file, const void* buffer, tSize length);
 
   int Flush(hdfsFS fs, hdfsFile file);
+
+  int Sync(hdfsFS fs, hdfsFile file);
 
   int Available(hdfsFS fs, hdfsFile file);
 

@@ -187,8 +187,12 @@ class GcsOutputStream : public arrow::io::OutputStream {
       return Status::OK();
     }
     stream_.Close();
-    closed_ = true;
-    return internal::ToArrowStatus(stream_.last_status());
+    auto status = stream_.metadata().status();
+    if (status.ok()) {
+      closed_ = true;
+      return Status::OK();
+    }
+    return internal::ToArrowStatus(status);
   }
 
   Result<int64_t> Tell() const override {
@@ -222,8 +226,17 @@ class GcsOutputStream : public arrow::io::OutputStream {
     return Status::OK();
   }
 
+  Status Sync() override {
+    // GCS API is so limited that not even Flush() really flushes the data to the server.
+    // If less than 256Kb of data is on the buffer only when Close() is called
+    // and gcs::internal::ObjectWriteStreambuf::FlushFinal() is triggered that remaining data
+    // is sent to the server. But once data is sent to the server it is strongly consistent,
+    // so there is no need to call Sync().
+    return Status::NotImplemented("GCS does not support Sync()");
+  }
+
  private:
-  gcs::ObjectWriteStream stream_;
+  gcs::ObjectWriteStram stream_;
   int64_t tell_ = 0;
   bool closed_ = false;
 };

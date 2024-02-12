@@ -63,6 +63,7 @@ class ARROW_EXPORT CompressedOutputStream : public OutputStream {
   using Writable::Write;
   /// \endcond
   Status Flush() override;
+  Status DurableSync() override;
 
   /// \brief Return the underlying raw output stream.
   std::shared_ptr<OutputStream> raw() const;

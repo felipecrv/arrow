@@ -712,6 +712,7 @@ class ObjectAppendStream final : public io::OutputStream {
       for (auto block : block_list.CommittedBlocks) {
         block_ids_.push_back(block.Name);
       }
+      flushed_block_ids_ = block_ids_.size();
     }
     return Status::OK();
   }
@@ -759,7 +760,22 @@ class ObjectAppendStream final : public io::OutputStream {
 
   Status Flush() override {
     RETURN_NOT_OK(CheckClosed("flush"));
-    return CommitBlockList(block_blob_client_, block_ids_, metadata_);
+    RETURN_NOT_OK(CommitBlockList(block_blob_client_, block_ids_, metadata_));
+    flushed_block_ids_ = block_ids_.size();
+    return Status::OK();
+  }
+
+  Status Sync() override {
+    RETURN_NOT_OK(CheckClosed("sync"));
+    if (flushed_block_ids_ < block_ids_.size()) {
+      return Status::Invalid(
+          "Cannot call Writable::Sync() when there is data to Flush()");
+    }
+    // There is no need for synchronization because block commits (performed on
+    // Flush()) are synchronous writes. Without block commits, data is not really
+    // written (it gets garbage collected), and after block commits they are
+    // both written and durable.
+    return Status::OK();
   }
 
  private:
@@ -815,6 +831,8 @@ class ObjectAppendStream final : public io::OutputStream {
   int64_t pos_ = 0;
   int64_t content_length_ = kNoSize;
   std::vector<std::string> block_ids_;
+  // used only to check if there is a need to flush, but not to prevent a flush
+  size_t flushed_block_ids_ = 0;
   Storage::Metadata metadata_;
 };
 

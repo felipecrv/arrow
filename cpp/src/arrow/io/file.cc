@@ -462,6 +462,18 @@ class MemoryMappedFile::MemoryMap
     return Status::OK();
   }
 
+  /// \pre opened() && writable()
+  Status DurableSync() {
+    uint8_t* data = region_->data();
+    int64_t length = region_->size();
+    int result = msync(data, static_cast<size_t>(length), MS_SYNC);
+    if (result != 0) {
+      return Status::IOError("Memory-mapped file sync failed: ",
+                             ::arrow::internal::ErrnoMessage(errno));
+    }
+    return Status::OK();
+  }
+
   // Resize the mmap and file to the specified size.
   // Resize on memory mapped file region is not supported.
   Status Resize(const int64_t new_size) {
@@ -636,6 +648,14 @@ Result<int64_t> MemoryMappedFile::GetSize() {
 Result<int64_t> MemoryMappedFile::Tell() const {
   RETURN_NOT_OK(memory_map_->CheckClosed());
   return memory_map_->position();
+}
+
+Status MemoryMappedFile::DurableSync() {
+  RETURN_NOT_OK(memory_map_->CheckClosed());
+  if (!memory_map_->writable()) {
+    return Status::IOError("Cannot sync a readonly memory map");
+  }
+  return memory_map_->DurableSync();
 }
 
 Status MemoryMappedFile::Seek(int64_t position) {

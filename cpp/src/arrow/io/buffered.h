@@ -78,6 +78,7 @@ class ARROW_EXPORT BufferedOutputStream : public OutputStream {
   Status Write(const std::shared_ptr<Buffer>& data) override;
 
   Status Flush() override;
+  Status DurableSync() override;
 
   /// \brief Return the underlying raw output stream.
   std::shared_ptr<OutputStream> raw() const;

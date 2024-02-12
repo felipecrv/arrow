@@ -64,6 +64,7 @@ class ARROW_EXPORT FileOutputStream : public OutputStream {
   Status Close() override;
   bool closed() const override;
   Result<int64_t> Tell() const override;
+  Status DurableSync() override;
 
   // Write bytes to the stream. Thread-safe
   Status Write(const void* data, int64_t nbytes) override;
@@ -203,6 +204,13 @@ class ARROW_EXPORT MemoryMappedFile : public ReadWriteFileInterface {
 
   /// Write data at a particular position in the file. Thread-safe
   Status WriteAt(int64_t position, const void* data, int64_t nbytes) override;
+
+  /// Calls msync(flags=MS_SYNC) on the memory-mapped region.
+  ///
+  /// If another thread is writing to the file, some data may not be synced to
+  /// stable storage on this call. Dealing with this data race is a responsibility
+  /// of the caller.
+  Status DurableSync() override;
 
   Result<int64_t> GetSize() override;
 

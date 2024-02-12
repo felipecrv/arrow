@@ -313,6 +313,7 @@ Status LibHdfsShim::GetRequiredSymbols() {
   // File methods
   GET_SYMBOL_REQUIRED(this, hdfsCloseFile);
   GET_SYMBOL_REQUIRED(this, hdfsFlush);
+  GET_SYMBOL_REQUIRED(this, hdfsSync);
   GET_SYMBOL_REQUIRED(this, hdfsOpenFile);
   GET_SYMBOL_REQUIRED(this, hdfsRead);
   GET_SYMBOL_REQUIRED(this, hdfsSeek);
@@ -423,6 +424,8 @@ tSize LibHdfsShim::Write(hdfsFS fs, hdfsFile file, const void* buffer, tSize len
 }
 
 int LibHdfsShim::Flush(hdfsFS fs, hdfsFile file) { return this->hdfsFlush(fs, file); }
+
+int LibHdfsShim::Sync(hdfsFS fs, hdfsFile file) { return this->hdfsSync(fs, file); }
 
 int LibHdfsShim::Available(hdfsFS fs, hdfsFile file) {
   GET_SYMBOL(this, hdfsAvailable);

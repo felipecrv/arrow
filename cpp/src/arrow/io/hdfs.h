@@ -264,6 +264,7 @@ class ARROW_EXPORT HdfsOutputStream : public OutputStream {
   Status Write(const void* buffer, int64_t nbytes) override;
 
   Status Flush() override;
+  Status DurableSync() override;
 
   Result<int64_t> Tell() const override;
 

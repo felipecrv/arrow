@@ -234,6 +234,13 @@ class MockFSOutputStream : public io::OutputStream {
     return builder_.Append(data, nbytes);
   }
 
+  Status Sync() override {
+    if (closed_) {
+      return Status::Invalid("Invalid operation on closed stream");
+    }
+    return Status::OK();
+  }
+
  protected:
   File* file_;
   BufferBuilder builder_;

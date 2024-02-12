@@ -58,6 +58,8 @@ class ARROW_EXPORT BufferOutputStream : public OutputStream {
   bool closed() const override;
   Result<int64_t> Tell() const override;
   Status Write(const void* data, int64_t nbytes) override;
+  Status Flush() override { return Status::OK(); }
+  Status DurableSync() override { return Status::OK(); }
 
   /// \cond FALSE
   using OutputStream::Write;
@@ -102,6 +104,7 @@ class ARROW_EXPORT MockOutputStream : public OutputStream {
   bool closed() const override;
   Result<int64_t> Tell() const override;
   Status Write(const void* data, int64_t nbytes) override;
+  Status DurableSync() override;
   /// \cond FALSE
   using Writable::Write;
   /// \endcond
@@ -124,6 +127,8 @@ class ARROW_EXPORT FixedSizeBufferWriter : public WritableFile {
   bool closed() const override;
   Status Seek(int64_t position) override;
   Result<int64_t> Tell() const override;
+  Status DurableSync() override;
+
   Status Write(const void* data, int64_t nbytes) override;
   /// \cond FALSE
   using Writable::Write;
