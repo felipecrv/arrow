@@ -752,7 +752,7 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
     ChunkLocation resolved_index = {0, 0};
     ChunkResolver index_resolver(values.chunks());
     for (int64_t requested_index = 0; requested_index < num_indices; ++requested_index) {
-      uint64_t index;
+      uint64_t index = 0;
       switch (indices_type_id) {
         case Type::UINT8:
         case Type::INT8:
