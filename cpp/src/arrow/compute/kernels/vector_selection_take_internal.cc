@@ -17,10 +17,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <vector>
-#include <iostream>
 
 #include "arrow/array/builder_primitive.h"
 #include "arrow/array/concatenate.h"
@@ -697,7 +697,8 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
                                              const Array& indices,
                                              const TakeOptions& options,
                                              ExecContext* ctx) {
-  std::cerr << "TakeCA " << indices.ToString() << " from " << values.ToString() << std::endl;
+  std::cerr << "TakeCA " << indices.ToString() << " from " << values.ToString()
+            << std::endl;
   auto num_chunks = values.num_chunks();
   auto num_indices = indices.length();
 
@@ -774,7 +775,8 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
           break;
       }
 
-      resolved_index = index_resolver.ResolveWithChunkIndexHint(index, resolved_index.chunk_index);
+      resolved_index =
+          index_resolver.ResolveWithChunkIndexHint(index, resolved_index.chunk_index);
       int64_t chunk_index = resolved_index.chunk_index;
       if (chunk_index >= num_chunks) {
         // ChunkResolver doesn't throw errors when the index is out of bounds
@@ -782,7 +784,7 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
         return Status::IndexError("Index ", index, " is out of bounds");
       }
       indices_chunks[requested_index] = chunk_index;
-      Int64Builder &builder = builders[chunk_index];
+      Int64Builder& builder = builders[chunk_index];
       if (builder.capacity() == builder.length()) {
         // Preallocate to speed up appending
         ARROW_RETURN_NOT_OK(builder.Reserve(1 << 13));
@@ -805,7 +807,8 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
       std::shared_ptr<Int64Array> indices_array;
       ARROW_RETURN_NOT_OK(builders[i].Finish(&indices_array));
       ARROW_ASSIGN_OR_RAISE(
-        looked_up_values_data[i], TakeAA(values.chunk(i)->data(), indices_array->data(), options, ctx));
+          looked_up_values_data[i],
+          TakeAA(values.chunk(i)->data(), indices_array->data(), options, ctx));
       looked_up_values.emplace_back(*looked_up_values_data[i]);
     }
 
@@ -822,7 +825,8 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
       if (chunk_index != current_chunk) {
         if (current_length == looked_up_values[current_chunk].length) {
           // We have taken a whole consecutive chunk, so we can append it to the result.
-          std::cerr << "Full Chunk " << current_chunk << "," << current_length << " :" << looked_up_values[current_chunk].ToArray()->ToString() << std::endl;
+          std::cerr << "Full Chunk " << current_chunk << "," << current_length << " :"
+                    << looked_up_values[current_chunk].ToArray()->ToString() << std::endl;
           if (result_builder->length() > 0) {
             // First close the current chunk being built and add it to the chunked array,
             // then we can add the full chunk to the array after it.
@@ -833,13 +837,12 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
           }
           // Append the whole chunk itself
           result_chunks.push_back(looked_up_values[current_chunk].ToArray());
-        }
-        else {
+        } else {
           std::cerr << "Append Slice" << std::endl;
           // Values in previous chunk
           ARROW_RETURN_NOT_OK(result_builder->AppendArraySlice(
-              looked_up_values[current_chunk],
-              consumed_chunk_offset[current_chunk], current_length));
+              looked_up_values[current_chunk], consumed_chunk_offset[current_chunk],
+              current_length));
         }
         consumed_chunk_offset[current_chunk] += current_length;
         current_chunk = chunk_index;
@@ -852,7 +855,10 @@ Result<std::shared_ptr<ChunkedArray>> TakeCA(const ChunkedArray& values,
       ARROW_RETURN_NOT_OK(result_builder->AppendArraySlice(
           looked_up_values[current_chunk], consumed_chunk_offset[current_chunk],
           current_length));
-      std::cerr << "Appended Last Slice" << looked_up_values[current_chunk].ToArray()->ToString() << " @ " << consumed_chunk_offset[current_chunk] << "," << current_length << std::endl;
+      std::cerr << "Appended Last Slice"
+                << looked_up_values[current_chunk].ToArray()->ToString() << " @ "
+                << consumed_chunk_offset[current_chunk] << "," << current_length
+                << std::endl;
     }
     ARROW_ASSIGN_OR_RAISE(auto last_chunk_array, result_builder->Finish());
     std::cerr << "Last Chunk " << last_chunk_array->ToString() << std::endl;
