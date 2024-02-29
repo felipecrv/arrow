@@ -50,14 +50,45 @@ struct ResolvedChunk {
   }
 };
 
+template <typename ChunkType = std::shared_ptr<Array>>
 class ChunkedArrayResolver {
  private:
-  ::arrow::internal::ChunkResolver resolver_;
   std::vector<const Array*> chunks_;
+  ::arrow::internal::ChunkResolver resolver_;
+
+  template <typename A>
+  struct ChunkTypeTraitsTemplate {
+    using InnerType = std::remove_const_t<std::remove_pointer_t<A>>;
+    static const InnerType* ToRawPointer(const ChunkType& chunk) { return &chunk; }
+  };
+  template <typename A>
+  struct ChunkTypeTraitsTemplate<std::shared_ptr<A>> {
+    using InnerType = std::remove_const_t<A>;
+    static const InnerType* ToRawPointer(const ChunkType& chunk) { return chunk.get(); }
+  };
+
+  using ChunkTypeTraits = ChunkTypeTraitsTemplate<std::remove_const_t<ChunkType>>;
 
  public:
-  explicit ChunkedArrayResolver(const std::vector<const Array*>& chunks)
-      : resolver_(chunks), chunks_(chunks) {}
+  /// \brief The type of the array chunks without const and pointer (smart or raw).
+  using ChunkInnerType = typename ChunkTypeTraits::InnerType;
+
+ private:
+  explicit ChunkedArrayResolver(std::vector<const Array*> chunks)
+      : chunks_(std::move(chunks)), resolver_(chunks_) {}
+
+  // turn any std::vector<ChunkType> into std::vector<const Array*>
+  static std::vector<const Array*> MakeArrayPointers(
+      const std::vector<ChunkType>& arrays) {
+    std::vector<const Array*> pointers(arrays.size());
+    std::transform(arrays.begin(), arrays.end(), pointers.begin(),
+                   ChunkTypeTraits::ToRawPointer);
+    return pointers;
+  }
+
+ public:
+  explicit ChunkedArrayResolver(const std::vector<ChunkType>& chunks)
+      : chunks_(MakeArrayPointers(chunks)), resolver_(chunks_) {}
 
   ChunkedArrayResolver(ChunkedArrayResolver&& other) = default;
   ChunkedArrayResolver& operator=(ChunkedArrayResolver&& other) = default;
@@ -70,13 +101,6 @@ class ChunkedArrayResolver {
     return {chunks_[loc.chunk_index], loc.index_in_chunk};
   }
 };
-
-inline std::vector<const Array*> GetArrayPointers(const ArrayVector& arrays) {
-  std::vector<const Array*> pointers(arrays.size());
-  std::transform(arrays.begin(), arrays.end(), pointers.begin(),
-                 [&](const std::shared_ptr<Array>& array) { return array.get(); });
-  return pointers;
-}
 
 }  // namespace internal
 }  // namespace compute

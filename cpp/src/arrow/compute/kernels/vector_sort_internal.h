@@ -270,7 +270,7 @@ NullPartitionResult PartitionNulls(uint64_t* indices_begin, uint64_t* indices_en
 
 template <typename Partitioner>
 NullPartitionResult PartitionNullsOnly(uint64_t* indices_begin, uint64_t* indices_end,
-                                       const ChunkedArrayResolver& resolver,
+                                       const ChunkedArrayResolver<>& resolver,
                                        int64_t null_count, NullPlacement null_placement) {
   if (null_count == 0) {
     return NullPartitionResult::NoNulls(indices_begin, indices_end, null_placement);
@@ -295,7 +295,7 @@ template <typename ArrayType, typename Partitioner>
 enable_if_t<!has_null_like_values<typename ArrayType::TypeClass>::value,
             NullPartitionResult>
 PartitionNullLikes(uint64_t* indices_begin, uint64_t* indices_end,
-                   const ChunkedArrayResolver& resolver, NullPlacement null_placement) {
+                   const ChunkedArrayResolver<>& resolver, NullPlacement null_placement) {
   return NullPartitionResult::NoNulls(indices_begin, indices_end, null_placement);
 }
 
@@ -303,7 +303,7 @@ template <typename ArrayType, typename Partitioner,
           typename TypeClass = typename ArrayType::TypeClass>
 enable_if_t<has_null_like_values<TypeClass>::value, NullPartitionResult>
 PartitionNullLikes(uint64_t* indices_begin, uint64_t* indices_end,
-                   const ChunkedArrayResolver& resolver, NullPlacement null_placement) {
+                   const ChunkedArrayResolver<>& resolver, NullPlacement null_placement) {
   Partitioner partitioner;
   if (null_placement == NullPlacement::AtStart) {
     auto null_likes_end = partitioner(indices_begin, indices_end, [&](uint64_t ind) {
@@ -322,7 +322,7 @@ PartitionNullLikes(uint64_t* indices_begin, uint64_t* indices_end,
 
 template <typename ArrayType, typename Partitioner>
 NullPartitionResult PartitionNulls(uint64_t* indices_begin, uint64_t* indices_end,
-                                   const ChunkedArrayResolver& resolver,
+                                   const ChunkedArrayResolver<>& resolver,
                                    int64_t null_count, NullPlacement null_placement) {
   // Partition nulls at start (resp. end), and null-like values just before (resp. after)
   NullPartitionResult p = PartitionNullsOnly<Partitioner>(
@@ -745,14 +745,13 @@ struct ResolvedTableSortKey {
                        SortOrder order, int64_t null_count)
       : type(GetPhysicalType(type)),
         owned_chunks(std::move(chunks)),
-        chunks(GetArrayPointers(owned_chunks)),
         order(order),
         null_count(null_count) {}
 
   using LocationType = ::arrow::internal::ChunkLocation;
 
   ResolvedChunk GetChunk(::arrow::internal::ChunkLocation loc) const {
-    return {chunks[loc.chunk_index], loc.index_in_chunk};
+    return {owned_chunks[loc.chunk_index].get(), loc.index_in_chunk};
   }
 
   // Make a vector of ResolvedSortKeys for the sort keys and the given table.
@@ -782,7 +781,6 @@ struct ResolvedTableSortKey {
 
   std::shared_ptr<DataType> type;
   ArrayVector owned_chunks;
-  std::vector<const Array*> chunks;
   SortOrder order;
   int64_t null_count;
 };

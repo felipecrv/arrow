@@ -83,7 +83,6 @@ class ChunkedArraySorter : public TypeVisitor {
       *output_ = {indices_end_, indices_end_, indices_end_, indices_end_};
       return Status::OK();
     }
-    const auto arrays = GetArrayPointers(physical_chunks_);
 
     // Sort each chunk independently and merge to sorted indices.
     // This is a serial implementation.
@@ -94,7 +93,7 @@ class ChunkedArraySorter : public TypeVisitor {
     int64_t end_offset = 0;
     int64_t null_count = 0;
     for (int i = 0; i < num_chunks; ++i) {
-      const auto array = checked_cast<const ArrayType*>(arrays[i]);
+      const auto array = checked_cast<const ArrayType*>(physical_chunks_[i].get());
       end_offset += array->length();
       null_count += array->null_count();
       ARROW_ASSIGN_OR_RAISE(sorted[i], array_sorter_(indices_begin_ + begin_offset,
@@ -111,13 +110,13 @@ class ChunkedArraySorter : public TypeVisitor {
                              int64_t null_count) {
         if (has_null_like_values<typename ArrayType::TypeClass>::value) {
           PartitionNullsOnly<StablePartitioner>(nulls_begin, nulls_end,
-                                                ChunkedArrayResolver(arrays), null_count,
+                                                ChunkedArrayResolver(physical_chunks_), null_count,
                                                 null_placement_);
         }
       };
       auto merge_non_nulls = [&](uint64_t* range_begin, uint64_t* range_middle,
                                  uint64_t* range_end, uint64_t* temp_indices) {
-        MergeNonNulls<ArrayType>(range_begin, range_middle, range_end, arrays,
+        MergeNonNulls<ArrayType>(range_begin, range_middle, range_end, physical_chunks_,
                                  temp_indices);
       };
 
@@ -155,7 +154,7 @@ class ChunkedArraySorter : public TypeVisitor {
 
   template <typename ArrayType>
   void MergeNonNulls(uint64_t* range_begin, uint64_t* range_middle, uint64_t* range_end,
-                     const std::vector<const Array*>& arrays, uint64_t* temp_indices) {
+                     const ArrayVector& arrays, uint64_t* temp_indices) {
     using ArrowType = typename ArrayType::TypeClass;
     const ChunkedArrayResolver left_resolver(arrays);
     const ChunkedArrayResolver right_resolver(arrays);

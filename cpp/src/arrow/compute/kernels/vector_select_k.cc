@@ -400,7 +400,7 @@ class TableSelector : public TypeVisitor {
           type(GetPhysicalType(chunked_array->type())),
           chunks(GetPhysicalChunks(*chunked_array, type)),
           null_count(chunked_array->null_count()),
-          resolver(GetArrayPointers(chunks)) {}
+          resolver(chunks) {}
 
     using LocationType = int64_t;
 
@@ -412,7 +412,7 @@ class TableSelector : public TypeVisitor {
     const std::shared_ptr<DataType> type;
     const ArrayVector chunks;
     const int64_t null_count;
-    const ChunkedArrayResolver resolver;
+    const ChunkedArrayResolver<> resolver;
   };
   using Comparator = MultipleKeyComparator<ResolvedSortKey>;
 
