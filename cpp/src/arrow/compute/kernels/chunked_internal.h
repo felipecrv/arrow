@@ -53,7 +53,7 @@ struct ResolvedChunk {
 template <typename ChunkType = std::shared_ptr<Array>>
 class ChunkedArrayResolver {
  private:
-  std::vector<const Array*> chunks_;
+  std::vector<ChunkType> chunks_;
   ::arrow::internal::ChunkResolver resolver_;
 
   template <typename A>
@@ -73,22 +73,9 @@ class ChunkedArrayResolver {
   /// \brief The type of the array chunks without const and pointer (smart or raw).
   using ChunkInnerType = typename ChunkTypeTraits::InnerType;
 
- private:
-  explicit ChunkedArrayResolver(std::vector<const Array*> chunks)
-      : chunks_(std::move(chunks)), resolver_(chunks_) {}
-
-  // turn any std::vector<ChunkType> into std::vector<const Array*>
-  static std::vector<const Array*> MakeArrayPointers(
-      const std::vector<ChunkType>& arrays) {
-    std::vector<const Array*> pointers(arrays.size());
-    std::transform(arrays.begin(), arrays.end(), pointers.begin(),
-                   ChunkTypeTraits::ToRawPointer);
-    return pointers;
-  }
-
  public:
   explicit ChunkedArrayResolver(const std::vector<ChunkType>& chunks)
-      : chunks_(MakeArrayPointers(chunks)), resolver_(chunks_) {}
+      : chunks_(chunks), resolver_(chunks_) {}
 
   ChunkedArrayResolver(ChunkedArrayResolver&& other) = default;
   ChunkedArrayResolver& operator=(ChunkedArrayResolver&& other) = default;
@@ -98,7 +85,7 @@ class ChunkedArrayResolver {
 
   ResolvedChunk Resolve(int64_t index) const {
     const auto loc = resolver_.Resolve(index);
-    return {chunks_[loc.chunk_index], loc.index_in_chunk};
+    return {ChunkTypeTraits::ToRawPointer(chunks_[loc.chunk_index]), loc.index_in_chunk};
   }
 };
 
