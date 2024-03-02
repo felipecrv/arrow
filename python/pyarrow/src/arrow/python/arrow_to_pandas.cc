@@ -2436,7 +2436,16 @@ class ConsolidatedBlockCreator : public PandasBlockCreator {
       return block->Write(std::move(arrays_[i]), i, this->column_block_placement_[i]);
     };
 
-    return OptionalParallelFor(options_.use_threads, num_columns_, WriteColumn);
+    if (options_.use_threads) {
+      const double kSmallTaskDurationSecs = 0.008;  // 8ms
+      return ::arrow::internal::ParallelForWithBackOff(num_columns_, WriteColumn,
+                                                       kSmallTaskDurationSecs);
+    } else {
+      for (int i = 0; i < num_columns_; ++i) {
+        RETURN_NOT_OK(WriteColumn(i));
+      }
+      return Status::OK();
+    }
   }
 
  private:
