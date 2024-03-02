@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <ratio>
 #include <utility>
 #include <vector>
 
@@ -96,6 +97,101 @@ Future<std::vector<R>> OptionalParallelForAsync(
     }
     return result;
   }
+}
+
+/// \brief Like ParallelFor, but tasks are submitted to the Executor in a way that
+/// tries to reduce the number of threads used.
+///
+/// This is useful when the tasks are not necessarily CPU-bound and the overhead
+/// of distributing the work to too many cores is significant (e.g. when the tasks
+/// depend on shared memory resources that are contended).
+///
+/// How tasks are submitted:
+///
+/// Tasks are submitted in a loop that tries to keep the number of in-flight tasks
+/// equal to num_threads. To start, num_threads=2 tasks are submitted to the Executor, and
+/// then we wait for one of them to finish for small_task_duration_secs. Then we check how
+/// many tasks are still in flight. If it's less than num_threads, we submit more tasks to
+/// the Executor to reach num_threads again, but if no task has finished, we grow
+/// num_threads geometrically before continuing the submission loop.
+///
+/// With the default GrowthRatio=4/3, num_threads grows according to the following
+/// progression:
+///
+///   2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, ...
+///
+/// If tasks take much more than small_task_duration_secs to finish, the number
+/// of waits is O(log(C)) where C is the capacity of the Executor (usually 4, 8,
+/// or 16). Otherwise, the loop guarantees we don't use all threads from the
+/// Executor because it learns that all tasks finish quickly and creating more
+/// threads is not necessary.
+///
+/// \param num_tasks The number of func(i) tasks to run
+/// \param func A function that takes an integer index and returns a Status
+/// \param small_task_duration_secs Time to wait before trying to submit a new
+///                                 batch of tasks to the Executor
+/// \return Status OK if all tasks succeeded, or the first error encountered
+template <class FUNCTION, class GrowthRatio = std::ratio<4, 3>>
+Status ParallelForWithBackOff(int num_tasks, FUNCTION&& func,
+                              double small_task_duration_secs,
+                              Executor* executor = internal::GetCpuThreadPool()) {
+  static_assert(GrowthRatio::num > 0 && GrowthRatio::den > 0,
+                "GrowthRatio should be positive");
+  static_assert(GrowthRatio::num > GrowthRatio::den, "GrowthRatio should be > 1");
+  std::vector<Future<>> futures;
+  auto status = Status::OK();
+
+  size_t num_threads = 2;
+  for (int next_task = 0; next_task < num_tasks;) {
+    // Ensure num_threads tasks are in flight. A task is considered in flight
+    // if it has been submitted to the Executor and we *don't know yet* if it has
+    // finished, but it could have been. This is what makes this approach not
+    // as aggressive as work-stealing, but it works well in practice if
+    // small_task_duration_secs is small enough.
+    while (futures.size() < num_threads) {
+      ARROW_ASSIGN_OR_RAISE(auto fut, executor->Submit(func, next_task));
+      futures.push_back(std::move(fut));
+      next_task += 1;
+      if (next_task >= num_tasks) {
+        break;
+      }
+    }
+    if (next_task >= num_tasks) {
+      break;
+    }
+    // Back off for a short duration before trying to submit new tasks again.
+    // Allowing the assignment of new tasks to existing threads in the pool.
+    {
+      auto& fut = futures[futures.size() / 2];
+      fut.Wait(small_task_duration_secs);
+    }
+    // Check all the futures without waiting because they had a chance to
+    // make progress while we were waiting for one to finish.
+    for (auto it = futures.begin(); it != futures.end();) {
+      if (it->is_finished()) {
+        status &= it->status();  // wait-free because it's finished
+        it = futures.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    // If after the wait, num_threads are still in flight,
+    // grow the number of in-flight tasks geometrically.
+    if (futures.size() >= num_threads) {
+      num_threads = ((num_threads * GrowthRatio::num - 1) / GrowthRatio::den) + 1;
+    }
+    // If the num_threads reaches the capacity of the executor, just submit
+    // all tasks to the Executor and stop backing off between submitting tasks.
+    if (ARROW_PREDICT_FALSE(num_threads >=
+                            static_cast<size_t>(executor->GetCapacity()))) {
+      num_threads = static_cast<size_t>(num_tasks);
+    }
+  }
+
+  for (auto& fut : futures) {
+    status &= fut.status();
+  }
+  return status;
 }
 
 }  // namespace internal
