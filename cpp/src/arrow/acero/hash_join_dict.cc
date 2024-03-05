@@ -114,13 +114,13 @@ static Result<std::shared_ptr<ArrayData>> ConvertImp(
     const FROM* from = arr.GetValues<FROM>(1);
     DCHECK_EQ(arr.length, batch_length);
 
+    auto* arr_validity = arr.buffers[0] ? arr.buffers[0]->data() : nullptr;
     for (int64_t i = 0; i < arr.length; ++i) {
       to[i] = static_cast<TO>(from[i]);
       // Make sure we did not lose information during cast
       ARROW_DCHECK(static_cast<FROM>(to[i]) == from[i]);
 
-      bool is_null = (arr.buffers[0] != NULLPTR) &&
-                     !bit_util::GetBit(arr.buffers[0]->data(), arr.offset + i);
+      bool is_null = arr_validity && !bit_util::GetBit(arr_validity, arr.offset + i);
       if (is_null) {
         bit_util::ClearBit(to_nn, i);
       }
