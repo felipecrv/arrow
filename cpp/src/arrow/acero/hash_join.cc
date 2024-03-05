@@ -30,6 +30,7 @@
 #include "arrow/compute/kernels/row_encoder_internal.h"
 #include "arrow/compute/row/encode_internal.h"
 #include "arrow/util/tracing_internal.h"
+#include "arrow/util/validity_internal.h"
 
 namespace arrow {
 
@@ -303,7 +304,7 @@ class HashJoinBasicImpl : public HashJoinImpl {
     ARROW_ASSIGN_OR_RAISE(
         Datum mask, ExecuteScalarExpression(filter_, concatenated, ctx_->exec_context()));
 
-    size_t num_probed_rows = match.size() + no_match.size();
+    const size_t num_probed_rows = match.size() + no_match.size();
     if (mask.is_scalar()) {
       const auto& mask_scalar = mask.scalar_as<BooleanScalar>();
       if (mask_scalar.is_valid && mask_scalar.value) {
@@ -319,11 +320,27 @@ class HashJoinBasicImpl : public HashJoinImpl {
         return Status::OK();
       }
     }
-    ARROW_DCHECK_EQ(mask.array()->offset, 0);
-    ARROW_DCHECK_EQ(mask.array()->length, static_cast<int64_t>(match_left.size()));
-    const uint8_t* validity =
-        mask.array()->buffers[0] ? mask.array()->buffers[0]->data() : nullptr;
-    const uint8_t* comparisons = mask.array()->buffers[1]->data();
+    auto& mask_array = *mask.array();
+    ARROW_DCHECK_EQ(mask_array.offset, 0);
+    ARROW_DCHECK_EQ(mask_array.length, static_cast<int64_t>(match_left.size()));
+    using internal::BitmapTag;
+    using internal::OptionalValidity;
+    if (mask_array.buffers[0] && mask_array.buffers[0]->data()) {
+      return ProbeBatch_Mask(match, no_match, match_left, match_right, mask_array,
+                             OptionalValidity<BitmapTag::kChecked>(mask_array));
+    } else {
+      return ProbeBatch_Mask(match, no_match, match_left, match_right, mask_array,
+                             OptionalValidity<BitmapTag::kEmpty>(mask_array));
+    }
+  }
+
+  template <typename MaskValidity>
+  Status ProbeBatch_Mask(std::vector<int32_t>& match, std::vector<int32_t>& no_match,
+                         std::vector<int32_t>& match_left,
+                         std::vector<int32_t>& match_right, const ArrayData& mask,
+                         const MaskValidity& mask_validity) {
+    const size_t num_probed_rows = match.size() + no_match.size();
+    const uint8_t* comparisons = mask.buffers[1]->data();
     size_t num_rows = match_left.size();
 
     match.clear();
@@ -342,8 +359,8 @@ class HashJoinBasicImpl : public HashJoinImpl {
       bool passed = false;
       for (; static_cast<size_t>(irow) < num_rows && match_left[irow] == curr_left;
            irow++) {
-        bool is_valid = !validity || bit_util::GetBit(validity, irow);
-        bool is_cmp_true = bit_util::GetBit(comparisons, irow);
+        const bool is_valid = mask_validity.IsValid(irow);
+        const bool is_cmp_true = bit_util::GetBit(comparisons, irow);
         // We treat a null comparison result as false, like in SQL
         if (is_valid && is_cmp_true) {
           match_left[match_idx] = match_left[irow];
