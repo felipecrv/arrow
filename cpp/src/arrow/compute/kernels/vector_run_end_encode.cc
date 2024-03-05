@@ -30,6 +30,9 @@ namespace compute {
 namespace internal {
 namespace {
 
+using ::arrow::internal::BitmapTag;
+using ::arrow::internal::OptionalValidity;
+
 struct RunEndEncodingState : public KernelState {
   explicit RunEndEncodingState(std::shared_ptr<DataType> run_end_type)
       : run_end_type{std::move(run_end_type)} {}
@@ -39,13 +42,14 @@ struct RunEndEncodingState : public KernelState {
   std::shared_ptr<DataType> run_end_type;
 };
 
-template <typename RunEndType, typename ValueType, bool has_validity_buffer>
+template <typename RunEndType, typename ValueType, typename InValidity,
+          std::enable_if_t<InValidity::kEitherEmptyOrChecked, bool> = true>
 class RunEndEncodingLoop {
  public:
   using RunEndCType = typename RunEndType::c_type;
 
  private:
-  using ReadWriteValue = ree_util::ReadWriteValue<ValueType, has_validity_buffer>;
+  using ReadWriteValue = ree_util::ReadWriteValue<ValueType, InValidity>;
   using ValueRepr = typename ReadWriteValue::ValueRepr;
 
  private:
@@ -156,7 +160,8 @@ ARROW_NOINLINE Status ValidateRunEndType(const std::shared_ptr<DataType>& run_en
   return Status::OK();
 }
 
-template <typename RunEndType, typename ValueType, bool has_validity_buffer>
+template <typename RunEndType, typename ValueType, typename InValidity,
+          std::enable_if_t<InValidity::kEitherEmptyOrChecked, bool> = true>
 class RunEndEncodeImpl {
  private:
   KernelContext* ctx_;
@@ -178,7 +183,7 @@ class RunEndEncodeImpl {
     if (input_length == 0) {
       ARROW_ASSIGN_OR_RAISE(
           auto output_array_data,
-          ree_util::PreallocateREEArray(std::move(ree_type), has_validity_buffer,
+          ree_util::PreallocateREEArray(std::move(ree_type), InValidity::kMayHaveBitmap,
                                         /*logical_length=*/input_length,
                                         /*physical_length=*/0, ctx_->memory_pool(),
                                         /*data_buffer_size=*/0));
@@ -192,21 +197,22 @@ class RunEndEncodeImpl {
     int64_t data_buffer_size = 0;  // for string and binary types
     RETURN_NOT_OK(ValidateRunEndType(run_end_type, input_length));
 
-    RunEndEncodingLoop<RunEndType, ValueType, has_validity_buffer> counting_loop(
+    RunEndEncodingLoop<RunEndType, ValueType, InValidity> counting_loop(
         input_array_,
         /*output_values_array_data=*/NULLPTR,
         /*output_run_ends=*/NULLPTR);
     std::tie(num_valid_runs, num_output_runs, data_buffer_size) =
         counting_loop.CountNumberOfRuns();
     const auto physical_null_count = num_output_runs - num_valid_runs;
-    DCHECK(!has_validity_buffer || physical_null_count > 0)
-        << "has_validity_buffer is expected to imply physical_null_count > 0";
+    DCHECK(!InValidity::kMayHaveBitmap || physical_null_count > 0)
+        << "InValidity::kMayHaveBitmap is expected to imply physical_null_count > 0";
 
     ARROW_ASSIGN_OR_RAISE(
         auto output_array_data,
-        ree_util::PreallocateREEArray(
-            std::move(ree_type), has_validity_buffer, /*logical_length=*/input_length,
-            /*physical_length=*/num_output_runs, ctx_->memory_pool(), data_buffer_size));
+        ree_util::PreallocateREEArray(std::move(ree_type), InValidity::kMayHaveBitmap,
+                                      /*logical_length=*/input_length,
+                                      /*physical_length=*/num_output_runs,
+                                      ctx_->memory_pool(), data_buffer_size));
 
     // Initialize the output pointers
     auto* output_run_ends =
@@ -216,7 +222,7 @@ class RunEndEncodeImpl {
     output_values_array_data->null_count = physical_null_count;
 
     // Second pass: write the runs
-    RunEndEncodingLoop<RunEndType, ValueType, has_validity_buffer> writing_loop(
+    RunEndEncodingLoop<RunEndType, ValueType, InValidity> writing_loop(
         input_array_, output_values_array_data, output_run_ends);
     [[maybe_unused]] int64_t num_written_runs = writing_loop.WriteEncodedRuns();
     DCHECK_EQ(num_written_runs, num_output_runs);
@@ -263,10 +269,13 @@ struct RunEndEncodeExec {
     } else {
       const bool has_validity_buffer = input_array.GetNullCount() > 0;
       if (has_validity_buffer) {
-        return RunEndEncodeImpl<RunEndType, ValueType, true>(ctx, input_array, result)
+        return RunEndEncodeImpl<RunEndType, ValueType,
+                                OptionalValidity<BitmapTag::kChecked>>(ctx, input_array,
+                                                                       result)
             .Exec();
       }
-      return RunEndEncodeImpl<RunEndType, ValueType, false>(ctx, input_array, result)
+      return RunEndEncodeImpl<RunEndType, ValueType, OptionalValidity<BitmapTag::kEmpty>>(
+                 ctx, input_array, result)
           .Exec();
     }
   }
@@ -304,13 +313,14 @@ Result<std::unique_ptr<KernelState>> RunEndEncodeInit(KernelContext*,
   return std::make_unique<RunEndEncodingState>(std::move(run_end_type));
 }
 
-template <typename RunEndType, typename ValueType, bool has_validity_buffer>
+template <typename RunEndType, typename ValueType, typename InValidity,
+          std::enable_if_t<InValidity::kEitherEmptyOrChecked, bool> = true>
 class RunEndDecodingLoop {
  public:
   using RunEndCType = typename RunEndType::c_type;
 
  private:
-  using ReadWriteValue = ree_util::ReadWriteValue<ValueType, has_validity_buffer>;
+  using ReadWriteValue = ree_util::ReadWriteValue<ValueType, InValidity>;
   using ValueRepr = typename ReadWriteValue::ValueRepr;
 
   const ArraySpan& input_array_;
@@ -379,7 +389,8 @@ class RunEndDecodingLoop {
   }
 };
 
-template <typename RunEndType, typename ValueType, bool has_validity_buffer>
+template <typename RunEndType, typename ValueType, typename InValidity,
+          std::enable_if_t<InValidity::kEitherEmptyOrChecked, bool> = true>
 class RunEndDecodeImpl {
  private:
   KernelContext* ctx_;
@@ -399,21 +410,20 @@ class RunEndDecodeImpl {
     int64_t data_buffer_size = 0;
     if constexpr (is_base_binary_like(ValueType::type_id)) {
       if (length > 0) {
-        RunEndDecodingLoop<RunEndType, ValueType, has_validity_buffer> loop(input_array_,
-                                                                            NULLPTR);
+        RunEndDecodingLoop<RunEndType, ValueType, InValidity> loop(input_array_, NULLPTR);
         data_buffer_size = loop.CalculateOutputDataBufferSize();
       }
     }
 
-    ARROW_ASSIGN_OR_RAISE(
-        auto output_array_data,
-        ree_util::PreallocateValuesArray(ree_type->value_type(), has_validity_buffer,
-                                         length, ctx_->memory_pool(), data_buffer_size));
+    ARROW_ASSIGN_OR_RAISE(auto output_array_data,
+                          ree_util::PreallocateValuesArray(
+                              ree_type->value_type(), InValidity::kMayHaveBitmap, length,
+                              ctx_->memory_pool(), data_buffer_size));
 
     int64_t output_null_count = 0;
     if (length > 0) {
-      RunEndDecodingLoop<RunEndType, ValueType, has_validity_buffer> loop(
-          input_array_, output_array_data.get());
+      RunEndDecodingLoop<RunEndType, ValueType, InValidity> loop(input_array_,
+                                                                 output_array_data.get());
       output_null_count = length - loop.ExpandAllRuns();
     }
     output_array_data->null_count = output_null_count;
@@ -444,10 +454,13 @@ struct RunEndDecodeExec {
       const bool has_validity_buffer =
           arrow::ree_util::ValuesArray(input_array).GetNullCount() > 0;
       if (has_validity_buffer) {
-        return RunEndDecodeImpl<RunEndType, ValueType, true>(ctx, input_array, result)
+        return RunEndDecodeImpl<RunEndType, ValueType,
+                                OptionalValidity<BitmapTag::kChecked>>(ctx, input_array,
+                                                                       result)
             .Exec();
       }
-      return RunEndDecodeImpl<RunEndType, ValueType, false>(ctx, input_array, result)
+      return RunEndDecodeImpl<RunEndType, ValueType, OptionalValidity<BitmapTag::kEmpty>>(
+                 ctx, input_array, result)
           .Exec();
     }
   }
