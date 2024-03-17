@@ -337,18 +337,15 @@ using TakeState = OptionsWrapper<TakeOptions>;
 /// only generate one take function for each bit width.
 ///
 /// This function assumes that the indices have been boundschecked.
-template <typename IndexCType, typename ValueBitWidthConstant>
+template <typename IndexCType, typename ValueBitWidthConstant,
+          typename OutputIsZeroInitialized = std::false_type>
 struct PrimitiveTakeImpl {
   static constexpr int kValueWidthInBits = ValueBitWidthConstant::value;
 
-  static Status Exec(KernelContext* ctx, const ArraySpan& values,
-                     const ArraySpan& indices, ArrayData* out_arr) {
+  static void Exec(KernelContext* ctx, const ArraySpan& values, const ArraySpan& indices,
+                   ArrayData* out_arr) {
     DCHECK_EQ(values.type->bit_width(), kValueWidthInBits);
-    // When we know for sure that values nor indices contain nulls, we can skip
-    // allocating the validity bitmap altogether and save time and space.
-    const bool allocate_validity = values.null_count != 0 || indices.null_count != 0;
-    RETURN_NOT_OK(PreallocatePrimitiveArrayData(ctx, indices.length, kValueWidthInBits,
-                                                allocate_validity, out_arr));
+    const bool out_has_validity = values.null_count != 0 || indices.null_count != 0;
     DCHECK_EQ(out_arr->offset, 0);
 
     int64_t valid_count = 0;
@@ -359,34 +356,25 @@ struct PrimitiveTakeImpl {
         /*idx_length=*/indices.length,
         /*       idx=*/indices.GetValues<IndexCType>(1),
         /*       out=*/out_arr->GetMutableValues<uint8_t>(1, 0)};
-    if (allocate_validity) {
-      // Zero-initialize the data buffer for the output array when the bit-width is 1
-      // (e.g. Boolean array) to avoid having to ClearBit on every null element.
-      // This might be profitable for other types as well, but this is the most
-      // conservative approach for now.
-      constexpr bool kOutputIsZeroInititalized = kValueWidthInBits == 1;
-      if constexpr (kOutputIsZeroInititalized) {
-        memset(out_arr->buffers[1]->mutable_data(), 0, out_arr->buffers[1]->size());
-      }
-      arrow::internal::OptionalValidity src_validity(values);
-      arrow::internal::OptionalValidity idx_validity(indices);
+    if (out_has_validity) {
       // out_is_valid must be zero-initiliazed, because Gather::Execute
       // saves time by not having to ClearBit on every null element.
       auto out_is_valid = out_arr->GetMutableValues<uint8_t>(0);
       bit_util::SetBitsTo(out_is_valid, 0, out_arr->length, false);
-      valid_count = gather.template Execute<kOutputIsZeroInititalized>(
+      arrow::internal::OptionalValidity src_validity(values);
+      arrow::internal::OptionalValidity idx_validity(indices);
+      valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
           src_validity, idx_validity, out_is_valid);
     } else {
       valid_count = gather.Execute();
     }
     out_arr->null_count = out_arr->length - valid_count;
-    return Status::OK();
   }
 };
 
 template <template <typename...> class TakeImpl, typename... Args>
-Status TakeIndexDispatch(KernelContext* ctx, const ArraySpan& values,
-                         const ArraySpan& indices, ArrayData* out) {
+void TakeIndexDispatch(KernelContext* ctx, const ArraySpan& values,
+                       const ArraySpan& indices, ArrayData* out) {
   // With the simplifying assumption that boundschecking has taken place
   // already at a higher level, we can now assume that the index values are all
   // non-negative. Thus, we can interpret signed integers as unsigned and avoid
@@ -403,7 +391,6 @@ Status TakeIndexDispatch(KernelContext* ctx, const ArraySpan& values,
       return TakeImpl<uint64_t, Args...>::Exec(ctx, values, indices, out);
   }
   DCHECK(false) << "Invalid indices byte width";
-  return Status::OK();
 }
 
 }  // namespace
@@ -418,35 +405,46 @@ Status PrimitiveTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult* 
 
   ArrayData* out_arr = out->array_data().get();
   const int bit_width = values.type->bit_width();
+  // When we know for sure that values nor indices contain nulls, we can skip
+  // allocating the validity bitmap altogether and save time and space.
+  const bool allocate_validity = values.null_count != 0 || indices.null_count != 0;
+  RETURN_NOT_OK(PreallocatePrimitiveArrayData(ctx, indices.length, bit_width,
+                                              allocate_validity, out_arr));
   switch (bit_width) {
     case 1:
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 1>>(
-          ctx, values, indices, out_arr);
+      // Zero-initialize the data buffer for the output array when the bit-width is 1
+      // (e.g. Boolean array) to avoid having to ClearBit on every null element.
+      // This might be profitable for other types as well, but we take the most
+      // conservative approach for now.
+      memset(out_arr->buffers[1]->mutable_data(), 0, out_arr->buffers[1]->size());
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 1>,
+                        /*OutputIsZeroInitialized=*/
+                        std::true_type>(ctx, values, indices, out_arr);
       break;
     case 8:
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 8>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 8>>(
           ctx, values, indices, out_arr);
       break;
     case 16:
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 16>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 16>>(
           ctx, values, indices, out_arr);
       break;
     case 32:
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 32>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 32>>(
           ctx, values, indices, out_arr);
       break;
     case 64:
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 64>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 64>>(
           ctx, values, indices, out_arr);
       break;
     case 128:
       // For INTERVAL_MONTH_DAY_NANO, DECIMAL128
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 128>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 128>>(
           ctx, values, indices, out_arr);
       break;
     case 256:
       // For DECIMAL256
-      return TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 256>>(
+      TakeIndexDispatch<PrimitiveTakeImpl, std::integral_constant<int, 256>>(
           ctx, values, indices, out_arr);
       break;
     default:
