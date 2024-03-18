@@ -18,6 +18,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <memory>
