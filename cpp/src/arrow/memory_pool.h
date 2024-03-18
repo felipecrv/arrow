@@ -58,10 +58,14 @@ class MemoryPoolStats {
       assert(diff <= 0);
     } else {
       if (diff > 0) {
-        // "maximum" allocated memory is ill-defined in multi-threaded code,
-        // so don't try to be too rigorous here
-        if (allocated > max_memory_) {
-          max_memory_ = allocated;
+        // max_memory_ is monotonically increasing, so we can use a relaxed load
+        // before the read-modify write. If othe threads are updating max_memory_
+        // concurrently we leave the loop without updating knowing that it
+        // already reached a value even higher than ours.
+        auto max_memory = max_memory_.load(std::memory_order_relaxed);
+        while (max_memory < allocated &&
+               !max_memory_.compare_exchange_weak(
+                   /*expected=*/max_memory, /*desired=*/allocated)) {
         }
 
         // Reallocations might just expand/contract the allocation in place or might
