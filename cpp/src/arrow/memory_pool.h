@@ -37,23 +37,32 @@ namespace internal {
 
 class MemoryPoolStats {
  private:
+  // All atomics are updated according to Acquire-Release ordering.
+  // https://en.cppreference.com/w/cpp/atomic/memory_order#Release-Acquire_ordering
+  //
+  // max_memory_, total_allocated_bytes_, and num_allocs_ only go up (they are
+  // monotonically increasing) which can allow some optimizations.
   std::atomic<int64_t> bytes_allocated_{0};
   std::atomic<int64_t> max_memory_{0};
   std::atomic<int64_t> total_allocated_bytes_{0};
   std::atomic<int64_t> num_allocs_{0};
 
  public:
-  int64_t max_memory() const { return max_memory_.load(); }
+  int64_t max_memory() const { return max_memory_.load(std::memory_order_acquire); }
 
-  int64_t bytes_allocated() const { return bytes_allocated_.load(); }
+  int64_t bytes_allocated() const {
+    return bytes_allocated_.load(std::memory_order_acquire);
+  }
 
-  int64_t total_bytes_allocated() const { return total_allocated_bytes_.load(); }
+  int64_t total_bytes_allocated() const {
+    return total_allocated_bytes_.load(std::memory_order_acquire);
+  }
 
-  int64_t num_allocations() const { return num_allocs_.load(); }
+  int64_t num_allocations() const { return num_allocs_.load(std::memory_order_acquire); }
 
   template <bool IsFree = false>
   inline void UpdateAllocatedBytes(int64_t diff) {
-    auto allocated = bytes_allocated_.fetch_add(diff) + diff;
+    auto allocated = bytes_allocated_.fetch_add(diff, std::memory_order_acq_rel) + diff;
     if constexpr (IsFree) {
       assert(diff <= 0);
     } else {
@@ -65,17 +74,18 @@ class MemoryPoolStats {
         auto max_memory = max_memory_.load(std::memory_order_relaxed);
         while (max_memory < allocated &&
                !max_memory_.compare_exchange_weak(
-                   /*expected=*/max_memory, /*desired=*/allocated)) {
+                   /*expected=*/max_memory, /*desired=*/allocated,
+                   std::memory_order_acq_rel)) {
         }
 
-        // Reallocations might just expand/contract the allocation in place or might
-        // copy to a new location. We can't really know, so we just represent the
-        // optimistic case.
-        total_allocated_bytes_ += diff;
+        // Reallocations might expand/contract the allocation in place or create a new
+        // allocation, copy, and free the previous allocation. We can't really know,
+        // so we just represent reallocations the same way we represent allocations.
+        total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
       }
 
       // We count any reallocation as a allocation.
-      num_allocs_ += 1;
+      num_allocs_.fetch_add(1, std::memory_order_acq_rel);
     }
   }
 };
