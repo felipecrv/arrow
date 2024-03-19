@@ -43,8 +43,8 @@ class MemoryPoolStats {
   //
   // max_memory_, total_allocated_bytes_, and num_allocs_ only go up (they are
   // monotonically increasing) which can allow some optimizations.
-  std::atomic<int64_t> bytes_allocated_{0};
   std::atomic<int64_t> max_memory_{0};
+  std::atomic<int64_t> bytes_allocated_{0};
   std::atomic<int64_t> total_allocated_bytes_{0};
   std::atomic<int64_t> num_allocs_{0};
 
@@ -63,29 +63,26 @@ class MemoryPoolStats {
 
   template <bool IsFree = false>
   inline void UpdateAllocatedBytes(int64_t diff) {
-    auto allocated = bytes_allocated_.fetch_add(diff, std::memory_order_acq_rel) + diff;
+    // max_memory_ is monotonically increasing, so we can use a relaxed load
+    // before the read-modify-write. Issue the load before everything else.
+    auto max_memory = max_memory_.load(std::memory_order_relaxed);
+    auto old_bytes_allocated =
+        bytes_allocated_.fetch_add(diff, std::memory_order_acq_rel);
     if constexpr (IsFree) {
       assert(diff <= 0);
     } else {
-      if (diff > 0) {
-        // max_memory_ is monotonically increasing, so we can use a relaxed load
-        // before the read-modify write. If othe threads are updating max_memory_
-        // concurrently we leave the loop without updating knowing that it
-        // already reached a value even higher than ours.
-        auto max_memory = max_memory_.load(std::memory_order_relaxed);
-        while (max_memory < allocated &&
-               !max_memory_.compare_exchange_weak(
-                   /*expected=*/max_memory, /*desired=*/allocated,
-                   std::memory_order_acq_rel)) {
-        }
-
-        // Reallocations might expand/contract the allocation in place or create a new
-        // allocation, copy, and free the previous allocation. We can't really know,
-        // so we just represent reallocations the same way we represent allocations.
-        total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
+      // If other threads are updating max_memory_ concurrently we leave the loop without
+      // updating knowing that it already reached a value even higher than ours.
+      const auto allocated = old_bytes_allocated + diff;
+      while (max_memory < allocated && !max_memory_.compare_exchange_weak(
+                                           /*expected=*/max_memory, /*desired=*/allocated,
+                                           std::memory_order_acq_rel)) {
       }
 
-      // We count any reallocation as a allocation.
+      // Reallocations might expand/contract the allocation in place or create a new
+      // allocation, copy, and free the previous allocation. We can't really know,
+      // so we just represent reallocations the same way we represent allocations.
+      total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
       num_allocs_.fetch_add(1, std::memory_order_acq_rel);
     }
   }
