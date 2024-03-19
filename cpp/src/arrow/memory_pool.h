@@ -76,6 +76,18 @@ class MemoryPoolStats {
     if constexpr (IsFree) {
       assert(diff <= 0);
     } else {
+      // Issue store operations on another cache line that can run while the CPU
+      // waits for max_memory and old_bytes_allocated.
+
+      // Reallocations might expand/contract the allocation in place or create a new
+      // allocation, copy, and free the previous allocation. We can't really know,
+      // so we just represent reallocations the same way we represent allocations.
+      total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
+      num_allocs_.fetch_add(1, std::memory_order_acq_rel);
+
+      // Now use the loaded values. The CPU won't wait for the fetch_adds
+      // because the return values are not used.
+
       // If other threads are updating max_memory_ concurrently we leave the loop without
       // updating knowing that it already reached a value even higher than ours.
       const auto allocated = old_bytes_allocated + diff;
@@ -83,12 +95,6 @@ class MemoryPoolStats {
                                            /*expected=*/max_memory, /*desired=*/allocated,
                                            std::memory_order_acq_rel)) {
       }
-
-      // Reallocations might expand/contract the allocation in place or create a new
-      // allocation, copy, and free the previous allocation. We can't really know,
-      // so we just represent reallocations the same way we represent allocations.
-      total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
-      num_allocs_.fetch_add(1, std::memory_order_acq_rel);
     }
   }
 };
