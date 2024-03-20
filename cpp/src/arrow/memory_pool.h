@@ -36,20 +36,17 @@ namespace internal {
 ///////////////////////////////////////////////////////////////////////
 // Helper tracking memory statistics
 
-class MemoryPoolStats {
+class alignas(/*CacheLineSize=*/64) MemoryPoolStats {
  private:
-  static constexpr int kCacheLineSize = 64;
   // All atomics are updated according to Acquire-Release ordering.
   // https://en.cppreference.com/w/cpp/atomic/memory_order#Release-Acquire_ordering
   //
   // max_memory_, total_allocated_bytes_, and num_allocs_ only go up (they are
   // monotonically increasing) which can allow some optimizations.
-  alignas(kCacheLineSize) struct {
-    std::atomic<int64_t> max_memory_{0};
-    std::atomic<int64_t> bytes_allocated_{0};
-    std::atomic<int64_t> total_allocated_bytes_{0};
-    std::atomic<int64_t> num_allocs_{0};
-  };
+  std::atomic<int64_t> max_memory_{0};
+  std::atomic<int64_t> bytes_allocated_{0};
+  std::atomic<int64_t> total_allocated_bytes_{0};
+  std::atomic<int64_t> num_allocs_{0};
 
  public:
   int64_t max_memory() const { return max_memory_.load(std::memory_order_acquire); }
