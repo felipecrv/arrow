@@ -36,7 +36,10 @@ namespace internal {
 ///////////////////////////////////////////////////////////////////////
 // Helper tracking memory statistics
 
-class alignas(/*CacheLineSize=*/64) MemoryPoolStats {
+/// \brief Memory pool statistics
+///
+/// 64-byte aligned so that all atomic values are on the same cache line.
+class alignas(64) MemoryPoolStats {
  private:
   // All atomics are updated according to Acquire-Release ordering.
   // https://en.cppreference.com/w/cpp/atomic/memory_order#Release-Acquire_ordering
