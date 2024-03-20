@@ -47,8 +47,6 @@ class MemoryPoolStats {
   alignas(kCacheLineSize) struct {
     std::atomic<int64_t> max_memory_{0};
     std::atomic<int64_t> bytes_allocated_{0};
-  };
-  alignas(kCacheLineSize) struct {
     std::atomic<int64_t> total_allocated_bytes_{0};
     std::atomic<int64_t> num_allocs_{0};
   };
@@ -76,17 +74,17 @@ class MemoryPoolStats {
     if constexpr (IsFree) {
       assert(diff <= 0);
     } else {
-      // Issue store operations on another cache line that can run while the CPU
-      // waits for max_memory and old_bytes_allocated.
-
+      // Issue store operations on values that we don't depend on to proceed
+      // with execution. When done, max_memory and old_bytes_allocated have
+      // a higher chance of being available on CPU registers. This also has the
+      // nice side-effect of putting 3 atomic stores close to each other in the
+      // instruction stream.
+      //
       // Reallocations might expand/contract the allocation in place or create a new
       // allocation, copy, and free the previous allocation. We can't really know,
       // so we just represent reallocations the same way we represent allocations.
       total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
       num_allocs_.fetch_add(1, std::memory_order_acq_rel);
-
-      // Now use the loaded values. The CPU won't wait for the fetch_adds
-      // because the return values are not used.
 
       // If other threads are updating max_memory_ concurrently we leave the loop without
       // updating knowing that it already reached a value even higher than ours.
