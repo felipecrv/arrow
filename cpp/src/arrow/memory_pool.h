@@ -64,36 +64,39 @@ class alignas(64) MemoryPoolStats {
 
   int64_t num_allocations() const { return num_allocs_.load(std::memory_order_acquire); }
 
-  template <bool IsFree = false>
-  inline void UpdateAllocatedBytes(int64_t diff) {
-    // max_memory_ is monotonically increasing, so we can use a relaxed load
-    // before the read-modify-write. Issue the load before everything else.
+  inline void DidAllocateBytes(int64_t size) {
+    // Issue the load before everything else. max_memory_ is monotonically increasing,
+    // so we can use a relaxed load before the read-modify-write.
     auto max_memory = max_memory_.load(std::memory_order_relaxed);
-    auto old_bytes_allocated =
-        bytes_allocated_.fetch_add(diff, std::memory_order_acq_rel);
-    if constexpr (IsFree) {
-      assert(diff <= 0);
-    } else {
-      // Issue store operations on values that we don't depend on to proceed
-      // with execution. When done, max_memory and old_bytes_allocated have
-      // a higher chance of being available on CPU registers. This also has the
-      // nice side-effect of putting 3 atomic stores close to each other in the
-      // instruction stream.
-      //
-      // Reallocations might expand/contract the allocation in place or create a new
-      // allocation, copy, and free the previous allocation. We can't really know,
-      // so we just represent reallocations the same way we represent allocations.
-      total_allocated_bytes_.fetch_add(diff, std::memory_order_acq_rel);
-      num_allocs_.fetch_add(1, std::memory_order_acq_rel);
+    const auto old_bytes_allocated =
+        bytes_allocated_.fetch_add(size, std::memory_order_acq_rel);
+    // Issue store operations on values that we don't depend on to proceed
+    // with execution. When done, max_memory and old_bytes_allocated have
+    // a higher chance of being available on CPU registers. This also has the
+    // nice side-effect of putting 3 atomic stores close to each other in the
+    // instruction stream.
+    total_allocated_bytes_.fetch_add(size, std::memory_order_acq_rel);
+    num_allocs_.fetch_add(1, std::memory_order_acq_rel);
 
-      // If other threads are updating max_memory_ concurrently we leave the loop without
-      // updating knowing that it already reached a value even higher than ours.
-      const auto allocated = old_bytes_allocated + diff;
-      while (max_memory < allocated && !max_memory_.compare_exchange_weak(
-                                           /*expected=*/max_memory, /*desired=*/allocated,
-                                           std::memory_order_acq_rel)) {
-      }
+    // If other threads are updating max_memory_ concurrently we leave the loop without
+    // updating knowing that it already reached a value even higher than ours.
+    const auto allocated = old_bytes_allocated + size;
+    while (max_memory < allocated && !max_memory_.compare_exchange_weak(
+                                         /*expected=*/max_memory, /*desired=*/allocated,
+                                         std::memory_order_acq_rel)) {
     }
+  }
+
+  inline void DidReallocateBytes(int64_t old_size, int64_t new_size) {
+    if (new_size > old_size) {
+      DidAllocateBytes(new_size - old_size);
+    } else {
+      DidFreeBytes(old_size - new_size);
+    }
+  }
+
+  inline void DidFreeBytes(int64_t size) {
+    bytes_allocated_.fetch_sub(size, std::memory_order_acq_rel);
   }
 };
 
