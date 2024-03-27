@@ -345,7 +345,6 @@ struct PrimitiveTakeImpl {
   static void Exec(KernelContext* ctx, const ArraySpan& values, const ArraySpan& indices,
                    ArrayData* out_arr) {
     DCHECK_EQ(values.type->bit_width(), kValueWidthInBits);
-    const bool out_has_validity = values.null_count != 0 || indices.null_count != 0;
     DCHECK_EQ(out_arr->offset, 0);
 
     int64_t valid_count = 0;
@@ -356,15 +355,26 @@ struct PrimitiveTakeImpl {
         /*idx_length=*/indices.length,
         /*       idx=*/indices.GetValues<IndexCType>(1),
         /*       out=*/out_arr->GetMutableValues<uint8_t>(1, 0)};
+    const bool out_has_validity = values.null_count != 0 || indices.null_count != 0;
     if (out_has_validity) {
       // out_is_valid must be zero-initiliazed, because Gather::Execute
       // saves time by not having to ClearBit on every null element.
       auto out_is_valid = out_arr->GetMutableValues<uint8_t>(0);
       bit_util::SetBitsTo(out_is_valid, 0, out_arr->length, false);
-      arrow::internal::OptionalValidity src_validity(values);
-      arrow::internal::OptionalValidity idx_validity(indices);
-      valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
-          src_validity, idx_validity, out_is_valid);
+      // NOTE: we don't have to specialize the OptionalValidity for idx because
+      // the kernel loop can quickly learn that the indices are all non-nulls
+      // and skip the validity buffer check.
+      if (values.null_count == 0) {
+        arrow::internal::OptionalValidity<BitmapTag::kEmpty> src_validity(values);
+        arrow::internal::OptionalValidity<BitmapTag::kMustCheck> idx_validity(indices);
+        valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
+            src_validity, idx_validity, out_is_valid);
+      } else {
+        arrow::internal::OptionalValidity<BitmapTag::kChecked> src_validity(values);
+        arrow::internal::OptionalValidity<BitmapTag::kMustCheck> idx_validity(indices);
+        valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
+            src_validity, idx_validity, out_is_valid);
+      }
     } else {
       valid_count = gather.Execute();
     }
@@ -407,7 +417,7 @@ Status PrimitiveTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult* 
   const int bit_width = values.type->bit_width();
   // When we know for sure that values nor indices contain nulls, we can skip
   // allocating the validity bitmap altogether and save time and space.
-  const bool allocate_validity = values.null_count != 0 || indices.null_count != 0;
+  const bool allocate_validity = values.GetNullCount() != 0 || indices.null_count != 0;
   RETURN_NOT_OK(PreallocatePrimitiveArrayData(ctx, indices.length, bit_width,
                                               allocate_validity, out_arr));
   switch (bit_width) {
