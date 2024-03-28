@@ -360,7 +360,7 @@ struct PrimitiveTakeImpl {
       // out_is_valid must be zero-initiliazed, because Gather::Execute
       // saves time by not having to ClearBit on every null element.
       auto out_is_valid = out_arr->GetMutableValues<uint8_t>(0);
-      bit_util::SetBitsTo(out_is_valid, 0, out_arr->length, false);
+      memset(out_is_valid, 0, bit_util::BytesForBits(out_arr->length));
       arrow::internal::OptionalValidity src_validity(values);
       arrow::internal::OptionalValidity idx_validity(indices);
       valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
@@ -404,13 +404,12 @@ Status PrimitiveTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult* 
   }
 
   ArrayData* out_arr = out->array_data().get();
-  const int bit_width = values.type->bit_width();
   // When we know for sure that values nor indices contain nulls, we can skip
   // allocating the validity bitmap altogether and save time and space.
   const bool allocate_validity = values.null_count != 0 || indices.null_count != 0;
-  RETURN_NOT_OK(PreallocatePrimitiveArrayData(ctx, indices.length, bit_width,
-                                              allocate_validity, out_arr));
-  switch (bit_width) {
+  RETURN_NOT_OK(PreallocateFixedWidthArrayData(ctx, indices.length, *values.type,
+                                               allocate_validity, out_arr));
+  switch (values.type->bit_width()) {
     case 1:
       // Zero-initialize the data buffer for the output array when the bit-width is 1
       // (e.g. Boolean array) to avoid having to ClearBit on every null element.

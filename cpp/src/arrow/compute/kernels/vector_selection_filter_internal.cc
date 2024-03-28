@@ -468,11 +468,10 @@ Status PrimitiveFilterExec(KernelContext* ctx, const ExecSpan& batch, ExecResult
   // validity bitmap.
   const bool allocate_validity = values.null_count != 0 || !filter_null_count_is_zero;
 
-  const int bit_width = values.type->bit_width();
-  RETURN_NOT_OK(PreallocatePrimitiveArrayData(ctx, output_length, bit_width,
-                                              allocate_validity, out_arr));
+  RETURN_NOT_OK(PreallocateFixedWidthArrayData(ctx, output_length, *values.type,
+                                               allocate_validity, out_arr));
 
-  switch (bit_width) {
+  switch (values.type->bit_width()) {
     case 1:
       PrimitiveFilterImpl<1, /*kIsBoolean=*/true>(values, filter, null_selection, out_arr)
           .Exec();
