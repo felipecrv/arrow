@@ -40,14 +40,12 @@
 #include "arrow/util/int_util.h"
 #include "arrow/util/ree_util.h"
 #include "arrow/util/scatter_gather_internal.h"
-#include "arrow/util/validity_internal.h"
 
 namespace arrow {
 
 using internal::BinaryBitBlockCounter;
 using internal::BitBlockCount;
 using internal::BitBlockCounter;
-using internal::BitmapTag;
 using internal::CheckIndexBounds;
 using internal::OptionalBitBlockCounter;
 
@@ -368,10 +366,8 @@ struct FixedWidthTakeImpl {
       // saves time by not having to ClearBit on every null element.
       auto out_is_valid = out_arr->GetMutableValues<uint8_t>(0);
       memset(out_is_valid, 0, bit_util::BytesForBits(out_arr->length));
-      arrow::internal::OptionalValidity src_validity(values);
-      arrow::internal::OptionalValidity idx_validity(indices);
       valid_count = gather.template Execute<OutputIsZeroInitialized::value>(
-          src_validity, idx_validity, out_is_valid);
+          /*src_validity=*/values, /*idx_validity=*/indices, out_is_valid);
     } else {
       valid_count = gather.Execute();
     }

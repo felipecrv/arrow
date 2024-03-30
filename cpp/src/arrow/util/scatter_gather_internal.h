@@ -20,13 +20,13 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+
 #include "arrow/array/data.h"
 #include "arrow/util/bit_block_counter.h"
 #include "arrow/util/bit_run_reader.h"
 #include "arrow/util/bit_util.h"
 #include "arrow/util/bitmap_ops.h"
 #include "arrow/util/macros.h"
-#include "arrow/util/validity_internal.h"
 
 // Implementation helpers for kernels that need to load (gather) from,
 // or store (scatter) data to, multiple, arbitrary indices.
@@ -61,71 +61,77 @@ class GatherBaseCRTP {
 
   // See derived Gather classes below for the meaning of the parameters, pre and
   // post-conditions.
-  template <bool kOutputIsZeroInitialized, class SrcValidity, class IdxValidity,
-            typename IndexCType>
-  ARROW_FORCE_INLINE int64_t ExecuteWithNulls(SrcValidity src_validity,
+  template <bool kOutputIsZeroInitialized, typename IndexCType>
+  ARROW_FORCE_INLINE int64_t ExecuteWithNulls(const ArraySpan& src_validity,
                                               int64_t idx_length, const IndexCType* idx,
-                                              IdxValidity idx_validity,
+                                              const ArraySpan& idx_validity,
                                               uint8_t* out_is_valid) {
     // The loop assumes that either the source or the index have a validity bitmap.
-    static_assert(!SrcValidity::kEmptyBitmap || !IdxValidity::kEmptyBitmap);
-    assert(src_validity.bitmap || idx_validity.bitmap);
-    // It's possible for an array to have a validity bitmap but no nulls. If SrcValidity
-    // is specialized with BitmapTag::kChecked we leverage that to discard half the code
-    // in the loop body and only emit the code that checks the bitmap on every iteration.
-    // If you want to emit code that checks null_count==0 and handles both cases, use
-    // BitmapTag::kMustCheck. We leave this assert here as a warning.
-    assert(!SrcValidity::kCheckedBitmap || src_validity.null_count != 0);
+    assert(src_validity.MayHaveNulls() || idx_validity.MayHaveNulls());
     auto* self = static_cast<GatherImpl*>(this);
-    const bool src_has_no_nulls =
-        SrcValidity::kEmptyBitmap || src_validity.null_count == 0;
-    OptionalBitBlockCounter indices_bit_counter(idx_validity.bitmap, idx_validity.offset,
-                                                idx_length);
+    OptionalBitBlockCounter indices_bit_counter(idx_validity.buffers[0].data,
+                                                idx_validity.offset, idx_length);
     int64_t position = 0;
     int64_t valid_count = 0;
     while (position < idx_length) {
       BitBlockCount block = indices_bit_counter.NextBlock();
-      if constexpr (SrcValidity::kEmptyBitmap || SrcValidity::kMustCheckBitmap) {
-        if (src_has_no_nulls) {
-          // Source values are never null, so things are easier
-          valid_count += block.popcount;
-          if (IdxValidity::kEmptyBitmap || block.popcount == block.length) {
-            // Fastest path: neither values nor index nulls
-            bit_util::SetBitsTo(out_is_valid, position, block.length, true);
+      if (!src_validity.MayHaveNulls()) {
+        // Source values are never null, so things are easier
+        valid_count += block.popcount;
+        if (block.popcount == block.length) {
+          // Fastest path: neither values nor index nulls
+          bit_util::SetBitsTo(out_is_valid, position, block.length, true);
+          for (int64_t i = 0; i < block.length; ++i) {
+            self->WriteValue(position);
+            ++position;
+          }
+        } else {
+          // XXX: enable later and benchmark
+          // ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
+          if (block.popcount > 0) {
+            // Slow path: some indices but not all are null
             for (int64_t i = 0; i < block.length; ++i) {
-              self->WriteValue(position);
+              if (idx_validity.IsValid(position)) {
+                // index is not null
+                bit_util::SetBit(out_is_valid, position);
+                self->WriteValue(position);
+              } else if constexpr (!kOutputIsZeroInitialized) {
+                self->WriteZero(position);
+              }
               ++position;
             }
-          } else if constexpr (!IdxValidity::kEmptyBitmap) {  // always true at runtime
-            constexpr auto IdxTagOverride = BitmapTag::kChecked;
-            if (block.popcount > 0) {
-              // Slow path: some indices but not all are null
-              for (int64_t i = 0; i < block.length; ++i) {
-                if (idx_validity.template IsValid<IdxTagOverride>(position)) {
-                  // index is not null
-                  bit_util::SetBit(out_is_valid, position);
-                  self->WriteValue(position);
-                } else if constexpr (!kOutputIsZeroInitialized) {
-                  self->WriteZero(position);
-                }
-                ++position;
-              }
-            } else {
-              self->WriteZeroSegment(position, block.length);
-              position += block.length;
-            }
+          } else {
+            self->WriteZeroSegment(position, block.length);
+            position += block.length;
           }
-          continue;
         }
+        continue;
       }
       // Values may have nulls, so we must do random access into the values bitmap
-      if constexpr (SrcValidity::kCheckedBitmap || SrcValidity::kMustCheckBitmap) {
-        constexpr auto SrcTagOverride = BitmapTag::kChecked;
-        if (IdxValidity::kEmptyBitmap || block.popcount == block.length) {
-          // Faster path: indices are not null but values may be
+      // XXX: enable later and benchmark
+      // ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
+      if (block.popcount == block.length) {
+        // Faster path: indices are not null but values may be
+        for (int64_t i = 0; i < block.length; ++i) {
+          if (src_validity.IsValid(idx[position])) {
+            // value is not null
+            self->WriteValue(position);
+            bit_util::SetBit(out_is_valid, position);
+            ++valid_count;
+          } else if constexpr (!kOutputIsZeroInitialized) {
+            self->WriteZero(position);
+          }
+          ++position;
+        }
+      } else {
+        // XXX: enable later and benchmark
+        // ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
+        if (block.popcount > 0) {
+          // Slow path: some but not all indices are null. Since we are doing random
+          // access in general we have to check the value nullness one by one.
           for (int64_t i = 0; i < block.length; ++i) {
-            if (src_validity.template IsValid<SrcTagOverride>(idx[position])) {
-              // value is not null
+            if (idx_validity.IsValid(position) && src_validity.IsValid(idx[position])) {
+              // index is not null && value is not null
               self->WriteValue(position);
               bit_util::SetBit(out_is_valid, position);
               ++valid_count;
@@ -134,29 +140,11 @@ class GatherBaseCRTP {
             }
             ++position;
           }
-        } else if constexpr (!IdxValidity::kEmptyBitmap) {  // always true at runtime
-          constexpr auto IdxTagOverride = BitmapTag::kChecked;
-          if (block.popcount > 0) {
-            // Slow path: some but not all indices are null. Since we are doing random
-            // access in general we have to check the value nullness one by one.
-            for (int64_t i = 0; i < block.length; ++i) {
-              if (idx_validity.template IsValid<IdxTagOverride>(position) &&
-                  src_validity.template IsValid<SrcTagOverride>(idx[position])) {
-                // index is not null && value is not null
-                self->WriteValue(position);
-                bit_util::SetBit(out_is_valid, position);
-                ++valid_count;
-              } else if constexpr (!kOutputIsZeroInitialized) {
-                self->WriteZero(position);
-              }
-              ++position;
-            }
-          } else {
-            if constexpr (!kOutputIsZeroInitialized) {
-              self->WriteZeroSegment(position, block.length);
-            }
-            position += block.length;
+        } else {
+          if constexpr (!kOutputIsZeroInitialized) {
+            self->WriteZeroSegment(position, block.length);
           }
+          position += block.length;
         }
       }
     }
@@ -247,10 +235,10 @@ class Gather : public GatherBaseCRTP<Gather<kValueWidthInBits, IndexCType, WithF
   ///       elements have 0s written to them. This might be less efficient than
   ///       zero-initializing first and calling this->Execute() afterwards.
   /// \return The number of valid elements in out.
-  template <bool kOutputIsZeroInitialized, class SrcValidity, class IdxValidity>
-  ARROW_FORCE_INLINE
-      std::enable_if_t<!SrcValidity::kEmptyBitmap || !IdxValidity::kEmptyBitmap, int64_t>
-      Execute(SrcValidity src_validity, IdxValidity idx_validity, uint8_t* out_is_valid) {
+  template <bool kOutputIsZeroInitialized>
+  ARROW_FORCE_INLINE int64_t Execute(const ArraySpan& src_validity,
+                                     const ArraySpan& idx_validity,
+                                     uint8_t* out_is_valid) {
     assert(src_length_ == src_validity.length);
     assert(idx_length_ == idx_validity.length);
     assert(out_is_valid);
@@ -304,10 +292,10 @@ class Gather<1, IndexCType, /*WithFactor=*/false>
   ///       elements have 0s written to them. This might be less efficient than
   ///       zero-initializing first and calling this->Execute() afterwards.
   /// \return The number of valid elements in out.
-  template <bool kOutputIsZeroInitialized, class SrcValidity, class IdxValidity>
-  ARROW_FORCE_INLINE
-      std::enable_if_t<!SrcValidity::kEmptyBitmap || !IdxValidity::kEmptyBitmap, int64_t>
-      Execute(SrcValidity src_validity, IdxValidity idx_validity, uint8_t* out_is_valid) {
+  template <bool kOutputIsZeroInitialized>
+  ARROW_FORCE_INLINE int64_t Execute(const ArraySpan& src_validity,
+                                     const ArraySpan& idx_validity,
+                                     uint8_t* out_is_valid) {
     assert(src_length_ == src_validity.length && src_offset_ == src_validity.offset);
     assert(idx_length_ == idx_validity.length);
     assert(out_is_valid);
