@@ -86,11 +86,10 @@ class GatherBaseCRTP {
             ++position;
           }
         } else {
-          // XXX: enable later and benchmark
-          // ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
           if (block.popcount > 0) {
             // Slow path: some indices but not all are null
             for (int64_t i = 0; i < block.length; ++i) {
+              ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
               if (idx_validity.IsValid(position)) {
                 // index is not null
                 bit_util::SetBit(out_is_valid, position);
@@ -107,12 +106,11 @@ class GatherBaseCRTP {
         }
         continue;
       }
-      // Values may have nulls, so we must do random access into the values bitmap
-      // XXX: enable later and benchmark
-      // ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
+      // Source values may be null, so we must do random access into src_validity
       if (block.popcount == block.length) {
-        // Faster path: indices are not null but values may be
+        // Faster path: source values may be null, but indices are not null
         for (int64_t i = 0; i < block.length; ++i) {
+          ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
           if (src_validity.IsValid(idx[position])) {
             // value is not null
             self->WriteValue(position);
@@ -124,12 +122,12 @@ class GatherBaseCRTP {
           ++position;
         }
       } else {
-        // XXX: enable later and benchmark
-        // ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
         if (block.popcount > 0) {
           // Slow path: some but not all indices are null. Since we are doing random
           // access in general we have to check the value nullness one by one.
           for (int64_t i = 0; i < block.length; ++i) {
+            ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
+            ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
             if (idx_validity.IsValid(position) && src_validity.IsValid(idx[position])) {
               // index is not null && value is not null
               self->WriteValue(position);
