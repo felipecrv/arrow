@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <string_view>
 #include <utility>
 
@@ -25,14 +26,17 @@
 
 namespace arrow::util {
 
+/// \pre size <= BinaryViewType::kInlineSize (12)
 inline BinaryViewType::c_type ToInlineBinaryView(const void* data, int32_t size) {
+  assert(size <= BinaryViewType::kInlineSize);
   // Small string: inlined. Bytes beyond size are zeroed
   BinaryViewType::c_type out;
-  out.inlined = {size, {}};
+  out.inlined = {size, /*data=*/{}};
   memcpy(&out.inlined.data, data, size);
   return out;
 }
 
+/// \pre v.size <= BinaryViewType::kInlineSize (12)
 inline BinaryViewType::c_type ToInlineBinaryView(std::string_view v) {
   return ToInlineBinaryView(v.data(), static_cast<int32_t>(v.size()));
 }
@@ -45,13 +49,15 @@ inline BinaryViewType::c_type ToBinaryView(const void* data, int32_t size,
 
   // Large string: store index/offset.
   BinaryViewType::c_type out;
-  out.ref = {size, {}, buffer_index, offset};
+  out.ref = {size, /*prefix=*/{}, buffer_index, offset};
   memcpy(&out.ref.prefix, data, sizeof(out.ref.prefix));
   return out;
 }
 
+/// \pre v.size <= std::numeric_limits<int32_t>::max()
 inline BinaryViewType::c_type ToBinaryView(std::string_view v, int32_t buffer_index,
                                            int32_t offset) {
+  assert(v.size() <= std::numeric_limits<int32_t>::max());
   return ToBinaryView(v.data(), static_cast<int32_t>(v.size()), buffer_index, offset);
 }
 

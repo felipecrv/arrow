@@ -837,6 +837,7 @@ class ARROW_EXPORT BinaryViewType : public DataType {
     int32_t size() const {
       // Size is in the common initial subsequence of each member of the union,
       // so accessing `inlined.size` is legal even if another member is active.
+      static_assert(offsetof(c_type, inlined.size) == offsetof(c_type, ref.size));
       return inlined.size;
     }
 
