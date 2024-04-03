@@ -37,6 +37,7 @@
 #include "arrow/util/bit_block_counter.h"
 #include "arrow/util/bit_run_reader.h"
 #include "arrow/util/bit_util.h"
+#include "arrow/util/fixed_width_internal.h"
 #include "arrow/util/int_util.h"
 #include "arrow/util/logging.h"
 #include "arrow/util/ree_util.h"
@@ -63,25 +64,6 @@ void RegisterSelectionFunction(const std::string& name, FunctionDoc doc,
   }
   kernels.clear();
   DCHECK_OK(registry->AddFunction(std::move(func)));
-}
-
-Status PreallocateFixedWidthArrayData(KernelContext* ctx, int64_t length,
-                                      const DataType& type, bool allocate_validity,
-                                      ArrayData* out) {
-  DCHECK(is_primitive(type.id()) || is_fixed_size_binary(type.id()));
-  // Preallocate memory
-  out->length = length;
-  out->buffers.resize(2);
-
-  if (allocate_validity) {
-    ARROW_ASSIGN_OR_RAISE(out->buffers[0], ctx->AllocateBitmap(length));
-  }
-  if (type.id() == Type::BOOL) {
-    ARROW_ASSIGN_OR_RAISE(out->buffers[1], ctx->AllocateBitmap(length));
-  } else {
-    ARROW_ASSIGN_OR_RAISE(out->buffers[1], ctx->Allocate(length * type.byte_width()));
-  }
-  return Status::OK();
 }
 
 namespace {
@@ -919,6 +901,11 @@ Status LargeListTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult* 
 }
 
 Status FSLTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult* out) {
+  const ArraySpan& values = batch[0].array;
+  if (util::IsFixedWidthModuloNesting<util::match::ExcludeType<Type::DICTIONARY>>(
+          values, /*force_null_count=*/true)) {
+    return FixedWidthTakeExec(ctx, batch, out);
+  }
   return TakeExec<FSLSelectionImpl>(ctx, batch, out);
 }
 

@@ -45,13 +45,6 @@ void RegisterSelectionFunction(const std::string& name, FunctionDoc doc,
                                const FunctionOptions* default_options,
                                FunctionRegistry* registry);
 
-/// \brief Allocate an ArrayData for a primitive array with a given length and bit width
-///
-/// \param[in] type A primitive or fixed-size binary DataType
-Status PreallocateFixedWidthArrayData(KernelContext* ctx, int64_t length,
-                                      const DataType& type, bool allocate_validity,
-                                      ArrayData* out);
-
 /// \brief Callback type for VisitPlainxREEFilterOutputSegments.
 ///
 /// position is the logical position in the values array relative to its offset.

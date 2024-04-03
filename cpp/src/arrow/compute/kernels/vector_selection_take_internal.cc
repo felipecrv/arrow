@@ -19,6 +19,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "arrow/array/builder_primitive.h"
@@ -37,6 +38,7 @@
 #include "arrow/util/bit_block_counter.h"
 #include "arrow/util/bit_run_reader.h"
 #include "arrow/util/bit_util.h"
+#include "arrow/util/fixed_width_internal.h"
 #include "arrow/util/int_util.h"
 #include "arrow/util/ree_util.h"
 #include "arrow/util/scatter_gather_internal.h"
@@ -325,7 +327,8 @@ using TakeState = OptionsWrapper<TakeOptions>;
 
 // ----------------------------------------------------------------------
 // Implement optimized take for primitive types from boolean to
-// 1/2/4/8/16/32-byte C-type based types and fixed-size binary.
+// 1/2/4/8/16/32-byte C-type based types and fixed-size binary (0 or more
+// bytes).
 //
 // Use one specialization for each of these primitive byte-widths so the
 // compiler can specialize the memcpy to dedicated CPU instructions and for
@@ -343,24 +346,44 @@ template <typename IndexCType, typename ValueBitWidth,
           typename OutputIsZeroInitialized = std::false_type,
           typename WithFactor = std::false_type>
 struct FixedWidthTakeImpl {
+  // offset returned is defined as number of ValueBitWidth blocks
+  static std::pair<int64_t, const uint8_t*> SourceOffsetAndValuesPointer(
+      const ArraySpan& values) {
+    if constexpr (ValueBitWidth::value == 1) {
+      DCHECK_EQ(values.type->id(), Type::BOOL);
+      return {values.offset, values.GetValues<uint8_t>(1, 0)};
+    } else {
+      static_assert(ValueBitWidth::value % 8 == 0,
+                    "ValueBitWidth must be 1 or a multiple of 8");
+      return {0, util::OffsetPointerOfFixedWidthValues(values)};
+    }
+  }
+
   static void Exec(KernelContext* ctx, const ArraySpan& values, const ArraySpan& indices,
                    ArrayData* out_arr, size_t factor) {
     DCHECK(WithFactor::value ||
-           (ValueBitWidth::value == values.type->bit_width() && factor == 1));
-    DCHECK(!WithFactor::value || factor * (ValueBitWidth::value / 8) ==
-                                     static_cast<size_t>(values.type->byte_width()));
+           (factor == 1 &&
+            ValueBitWidth::value == util::GetFixedBitWidthModuloNesting(*values.type)));
+    DCHECK(!WithFactor::value ||
+           (factor > 0 && ValueBitWidth::value == 8 &&  // factors are used with bytes
+            factor * ValueBitWidth::value ==
+                static_cast<size_t>(util::GetFixedBitWidthModuloNesting(*values.type))));
     const bool out_has_validity = values.null_count != 0 || indices.null_count != 0;
     DCHECK_EQ(out_arr->offset, 0);
 
-    int64_t valid_count = 0;
+    const uint8_t* src;
+    int64_t src_offset;
+    std::tie(src_offset, src) = SourceOffsetAndValuesPointer(values);
+    uint8_t* out = util::MutableFixedWidthValuesPointer(out_arr);
     arrow::internal::Gather<ValueBitWidth::value, IndexCType, WithFactor::value> gather{
         /*src_length=*/values.length,
-        /*       src=*/values.GetValues<uint8_t>(1, 0),
-        /*src_offset=*/values.offset,
+        src,
+        src_offset,
         /*idx_length=*/indices.length,
-        /*       idx=*/indices.GetValues<IndexCType>(1),
-        /*       out=*/out_arr->GetMutableValues<uint8_t>(1, 0),
-        /*    factor=*/factor};
+        /*idx=*/indices.GetValues<IndexCType>(1),
+        out,
+        factor};
+    int64_t valid_count = 0;
     if (out_has_validity) {
       // out_is_valid must be zero-initiliazed, because Gather::Execute
       // saves time by not having to ClearBit on every null element.
@@ -410,9 +433,24 @@ Status FixedWidthTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult*
   // When we know for sure that values nor indices contain nulls, we can skip
   // allocating the validity bitmap altogether and save time and space.
   const bool allocate_validity = values.null_count != 0 || indices.null_count != 0;
-  RETURN_NOT_OK(PreallocateFixedWidthArrayData(ctx, indices.length, *values.type,
-                                               allocate_validity, out_arr));
-  switch (values.type->bit_width()) {
+  RETURN_NOT_OK(util::internal::PreallocateFixedWidthArrayData(
+      ctx, indices.length, values, allocate_validity, out_arr));
+  int64_t byte_width = -1;
+  int64_t bit_width = -1;
+  if (values.type->id() == Type::BOOL) {
+    bit_width = 1;
+  } else {
+    byte_width = util::GetFixedByteWidthModuloNesting(*values.type);
+    bit_width = byte_width * 8;
+    DCHECK_GE(byte_width, 0);
+  }
+  switch (bit_width) {
+    case 0:
+      DCHECK(values.type->id() == Type::FIXED_SIZE_BINARY ||
+             values.type->id() == Type::FIXED_SIZE_LIST);
+      TakeIndexDispatch<FixedWidthTakeImpl, std::integral_constant<int, 0>>(
+          ctx, values, indices, out_arr);
+      break;
     case 1:
       // Zero-initialize the data buffer for the output array when the bit-width is 1
       // (e.g. Boolean array) to avoid having to ClearBit on every null element.
@@ -450,19 +488,19 @@ Status FixedWidthTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult*
           ctx, values, indices, out_arr);
       break;
     default:
-      if (values.type->id() == Type::FIXED_SIZE_BINARY) {
-        // Call byte_width() instead of bit_width/8 because bit_width could be overflowed.
-        const size_t factor = values.type->byte_width();
+      if (values.type->id() == Type::FIXED_SIZE_BINARY ||
+          values.type->id() == Type::FIXED_SIZE_LIST) {
+        // 0-length fixed-size binary or lists were handled above on `case 0`
+        DCHECK_GT(byte_width, 0);
         TakeIndexDispatch<FixedWidthTakeImpl,
                           /*ValueBitWidth=*/std::integral_constant<int, 8>,
                           /*OutputIsZeroInitialized=*/std::false_type,
                           /*WithFactor=*/std::true_type>(ctx, values, indices, out_arr,
-                                                         factor);
+                                                         /*factor=*/byte_width);
       } else {
         return Status::NotImplemented("Unsupported primitive type for take: ",
                                       *values.type);
       }
-      break;
   }
   return Status::OK();
 }
