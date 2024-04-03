@@ -167,31 +167,37 @@ class Gather : public GatherBaseCRTP<Gather<kValueWidthInBits, IndexCType, WithF
 
  public:
   void WriteValue(int64_t position) {
-    if constexpr (WithFactor) {
-      const size_t scaled_factor = kValueWidth * factor_;
-      memcpy(out_ + position * scaled_factor, src_ + idx_[position] * scaled_factor,
-             scaled_factor);
-    } else {
-      memcpy(out_ + position * kValueWidth, src_ + idx_[position] * kValueWidth,
-             kValueWidth);
+    if constexpr (kValueWidth > 0) {
+      if constexpr (WithFactor) {
+        const size_t scaled_factor = kValueWidth * factor_;
+        memcpy(out_ + position * scaled_factor, src_ + idx_[position] * scaled_factor,
+               scaled_factor);
+      } else {
+        memcpy(out_ + position * kValueWidth, src_ + idx_[position] * kValueWidth,
+               kValueWidth);
+      }
     }
   }
 
   void WriteZero(int64_t position) {
-    if constexpr (WithFactor) {
-      const size_t scaled_factor = kValueWidth * factor_;
-      memset(out_ + position * scaled_factor, 0, scaled_factor);
-    } else {
-      memset(out_ + position * kValueWidth, 0, kValueWidth);
+    if constexpr (kValueWidth > 0) {
+      if constexpr (WithFactor) {
+        const size_t scaled_factor = kValueWidth * factor_;
+        memset(out_ + position * scaled_factor, 0, scaled_factor);
+      } else {
+        memset(out_ + position * kValueWidth, 0, kValueWidth);
+      }
     }
   }
 
   void WriteZeroSegment(int64_t position, int64_t length) {
-    if constexpr (WithFactor) {
-      const size_t scaled_factor = kValueWidth * factor_;
-      memset(out_ + position * scaled_factor, 0, length * scaled_factor);
-    } else {
-      memset(out_ + position * kValueWidth, 0, length * kValueWidth);
+    if constexpr (kValueWidth > 0) {
+      if constexpr (WithFactor) {
+        const size_t scaled_factor = kValueWidth * factor_;
+        memset(out_ + position * scaled_factor, 0, length * scaled_factor);
+      } else {
+        memset(out_ + position * kValueWidth, 0, length * kValueWidth);
+      }
     }
   }
 
