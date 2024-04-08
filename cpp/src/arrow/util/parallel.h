@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <cassert>
+#include <chrono>
 #include <ratio>
 #include <utility>
 #include <vector>
@@ -106,89 +108,121 @@ Future<std::vector<R>> OptionalParallelForAsync(
 /// of distributing the work to too many cores is significant (e.g. when the tasks
 /// depend on shared memory resources that are contended).
 ///
-/// How tasks are submitted:
+/// How tasks are executed:
 ///
-/// Tasks are submitted in a loop that tries to keep the number of in-flight tasks
-/// equal to num_threads. To start, num_threads=2 tasks are submitted to the Executor, and
-/// then we wait for one of them to finish for small_task_duration_secs. Then we check how
-/// many tasks are still in flight. If it's less than num_threads, we submit more tasks to
-/// the Executor to reach num_threads again, but if no task has finished, we grow
-/// num_threads geometrically before continuing the submission loop.
+/// Every worker function is called with the first task index it should work on. When done
+/// with the fist task, it atomically increments a shared counter to get the next task
+/// index to work on. This maximizes the amount of work done by each thread.
 ///
-/// With the default GrowthRatio=4/3, num_threads grows according to the following
+/// Workers are created in a loop that starts with num_workers=1. On each iteration,
+/// workers are submitted to the Executor so that num_workers workers are running
+/// concurrently. Then the main thread tries to complete one task (the next available).
+/// This gives the workers a chance to make progress on one or more tasks. After
+/// this task is performed, we estimate the average wall-clock time per task so far and
+/// decide if we should grow the number of workers geometrically (capped by the Executor's
+/// capacity).
+///
+/// With the default GrowthRatio=4/3, num_workers grows according to the following
 /// progression:
 ///
-///   2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, ...
-///
-/// If tasks take much more than small_task_duration_secs to finish, the number
-/// of waits is O(log(C)) where C is the capacity of the Executor (usually 4, 8,
-/// or 16). Otherwise, the loop guarantees we don't use all threads from the
-/// Executor because it learns that all tasks finish quickly and creating more
-/// threads is not necessary.
+///   1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, ...
 ///
 /// \param num_tasks The number of func(i) tasks to run
 /// \param func A function that takes an integer index and returns a Status
-/// \param small_task_duration_secs Time to wait before trying to submit a new
-///                                 batch of tasks to the Executor
+/// \param small_task_duration_secs More workers are created only if tasks are taking
+///                                 longer than this duration on average to complete
 /// \return Status OK if all tasks succeeded, or the first error encountered
 template <class FUNCTION, class GrowthRatio = std::ratio<4, 3>>
 Status ParallelForWithBackOff(int num_tasks, FUNCTION&& func,
                               double small_task_duration_secs,
                               Executor* executor = internal::GetCpuThreadPool()) {
+  using steady_clock = std::chrono::steady_clock;
   static_assert(GrowthRatio::num > 0 && GrowthRatio::den > 0,
                 "GrowthRatio should be positive");
   static_assert(GrowthRatio::num > GrowthRatio::den, "GrowthRatio should be > 1");
-  std::vector<Future<>> futures;
-  auto status = Status::OK();
 
-  size_t num_threads = 2;
-  for (int next_task = 0; next_task < num_tasks;) {
-    // Ensure num_threads tasks are in flight. A task is considered in flight
-    // if it has been submitted to the Executor and we *don't know yet* if it has
-    // finished, but it could have been. This is what makes this approach not
-    // as aggressive as work-stealing, but it works well in practice if
-    // small_task_duration_secs is small enough.
-    while (futures.size() < num_threads) {
-      ARROW_ASSIGN_OR_RAISE(auto fut, executor->Submit(func, next_task));
-      futures.push_back(std::move(fut));
-      next_task += 1;
-      if (next_task >= num_tasks) {
+  if (num_tasks <= 0) {
+    return Status::OK();
+  }
+  if (num_tasks == 1) {
+    return func(0);
+  }
+
+  const auto start_time = steady_clock::now();
+  const auto max_workers = static_cast<size_t>(executor->GetCapacity());
+  size_t num_workers = 1;
+  std::vector<Future<>> workers;
+
+  // Keep next_task on its own 64-byte cache line to avoid false sharing with other
+  // variables. This is relevant because next_task is updated by all workers.
+  alignas(64) std::atomic<int> next_task{0};
+  // precondition: first_task < num_tasks
+  auto worker_func = [num_tasks, func = std::move<FUNCTION>(func), &next_task](
+                         int first_task, bool keep_working) -> Status {
+    assert(first_task < num_tasks);
+    auto status = func(first_task);
+    if (keep_working) {
+      while (status.ok()) {
+        const int task = next_task.fetch_add(1, std::memory_order_acq_rel);
+        if (task >= num_tasks) {
+          break;
+        }
+        status = func(task);
+      }
+    }
+    // If one func failed, just set next_task to num_tasks to stop the loop on
+    // all the workers as soon as they finish their current task.
+    if (!status.ok()) {
+      next_task.store(num_tasks, std::memory_order_release);
+    }
+    return status;
+  };
+  // use worker_func(task, false) instead of func(task) after this point
+
+  auto status = Status::OK();
+  for (int task = -1;;) {
+    // Make sure enough workers are running.
+    if (workers.size() < num_workers) {
+      workers.reserve(num_workers);
+      do {
+        task = next_task.fetch_add(1, std::memory_order_acq_rel);
+        if (task >= num_tasks) {
+          break;
+        }
+        ARROW_ASSIGN_OR_RAISE(auto fut,
+                              executor->Submit(worker_func, task, /*keep_working=*/true));
+        workers.push_back(std::move(fut));
+      } while (workers.size() < num_workers);
+      if (task >= num_tasks) {
         break;
       }
     }
-    if (next_task >= num_tasks) {
+    // Try to run one task on this thread before checking the workers.
+    task = next_task.fetch_add(1, std::memory_order_acq_rel);
+    if (task >= num_tasks) {
       break;
     }
-    // Back off for a short duration before trying to submit new tasks again.
-    // Allowing the assignment of new tasks to existing threads in the pool.
-    {
-      auto& fut = futures[futures.size() / 2];
-      fut.Wait(small_task_duration_secs);
+    status = worker_func(task, /*keep_working=*/false);
+    if (!status.ok()) {
+      break;
     }
-    // Check all the futures without waiting because they had a chance to
-    // make progress while we were waiting for one to finish.
-    for (auto it = futures.begin(); it != futures.end();) {
-      if (it->is_finished()) {
-        status &= it->status();  // wait-free because it's finished
-        it = futures.erase(it);
-      } else {
-        ++it;
+    if (num_workers < max_workers) {
+      auto elapsed_time = steady_clock::now() - start_time;
+      // Check on the global progress by conservatively estimating
+      // how many tasks were completed since the beginning.
+      auto num_tasks_completed = static_cast<double>(
+          next_task.load(std::memory_order_relaxed) - static_cast<int>(workers.size()));
+      // If the average wall-clock time per task is greater than the
+      // small_task_duration_secs, grow the number of workers geometrically.
+      if (static_cast<double>(elapsed_time.count() * steady_clock::period::num) >
+          (small_task_duration_secs * steady_clock::period::den) * num_tasks_completed) {
+        num_workers = std::min(
+            ((num_workers * GrowthRatio::num - 1) / GrowthRatio::den) + 1, max_workers);
       }
-    }
-    // If after the wait, num_threads are still in flight,
-    // grow the number of in-flight tasks geometrically.
-    if (futures.size() >= num_threads) {
-      num_threads = ((num_threads * GrowthRatio::num - 1) / GrowthRatio::den) + 1;
-    }
-    // If the num_threads reaches the capacity of the executor, just submit
-    // all tasks to the Executor and stop backing off between submitting tasks.
-    if (ARROW_PREDICT_FALSE(num_threads >=
-                            static_cast<size_t>(executor->GetCapacity()))) {
-      num_threads = static_cast<size_t>(num_tasks);
     }
   }
 
-  for (auto& fut : futures) {
+  for (auto& fut : workers) {
     status &= fut.status();
   }
   return status;
