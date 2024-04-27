@@ -559,16 +559,10 @@ Result<std::shared_ptr<ChunkedArray>> TakeCAC(const ChunkedArray& values,
                                               ExecContext* ctx) {
   std::shared_ptr<Array> values_array;
   if (values.num_chunks() == 1) {
-    // Case 1: `values` has a single chunk, so just use it
+    // `values` has a single chunk, so just use it
     values_array = values.chunk(0);
   } else {
-    // TODO Case 2: See if all `indices` fall in the same chunk and call Array Take on it
-    // See
-    // https://github.com/apache/arrow/blob/6f2c9041137001f7a9212f244b51bc004efc29af/r/src/compute.cpp#L123-L151
-    // TODO Case 3: If indices are sorted, can slice them and call Array Take
-    // (these are relevant to TakeCCC as well)
-
-    // Case 4: Else, concatenate chunks and call Array Take
+    // Else, concatenate chunks and call Array Take
     if (values.chunks().empty()) {
       ARROW_ASSIGN_OR_RAISE(
           values_array, MakeArrayOfNull(values.type(), /*length=*/0, ctx->memory_pool()));
