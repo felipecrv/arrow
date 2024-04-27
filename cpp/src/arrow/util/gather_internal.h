@@ -20,7 +20,13 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
+
+#include "arrow/array/array_base.h"
 #include "arrow/array/data.h"
+#include "arrow/chunk_resolver.h"
+#include "arrow/type_fwd.h"
+#include "arrow/type_traits.h"
 #include "arrow/util/bit_block_counter.h"
 #include "arrow/util/bit_run_reader.h"
 #include "arrow/util/bit_util.h"
@@ -283,4 +289,189 @@ class Gather</*kValueWidthInBits=*/1, IndexCType, /*kWithFactor=*/false>
   }
 };
 }  // namespace gather_internal
+
+class GatherFromChunksBase {
+ protected:
+  const ArrayVector& chunks_;
+  const ChunkResolver resolver_;
+  MemoryPool* pool_;
+
+  const bool chunks_have_nulls_;
+  /// \brief Pre-computed OffsetPointerOfFixedWidthValues() of every chunk.
+  ///
+  /// If the chunk is a BOOL array, this is the pointer to the first byte of the
+  /// data buffer and the internal chunk offset in bits has to be applied.
+  std::vector<const uint8_t*> src_chunks_;
+  uint8_t* out_;
+
+  /// \pre out is zero-initialized
+  GatherFromChunksBase(const ArrayVector& chunks, bool chunks_have_nulls,
+                       MemoryPool* pool, uint8_t* out) noexcept;
+
+ public:
+  /// \pre out is zero-initialized
+  GatherFromChunksBase(const ChunkedArray& chunked_array, MemoryPool* pool,
+                       uint8_t* out) noexcept;
+
+  ~GatherFromChunksBase();
+};
+
+template <int kValueWidthInBits, typename IndexCType, bool WithFactor>
+class GatherFromChunks : public GatherFromChunksBase {
+ public:
+  /// \pre out is zero-initialized
+  GatherFromChunks(const ChunkedArray& chunked_array, MemoryPool* pool,
+                   uint8_t* out) noexcept
+      : GatherFromChunksBase(chunked_array, pool, out) {}
+
+  Result<int64_t> Execute(const ArraySpan& indices, uint8_t* out_is_valid,
+                          int64_t factor) {
+    static_assert(kValueWidthInBits % 8 == 0 || kValueWidthInBits == 1,
+                  "kValueWidthInBits must be 1 or a multiple of 8");
+    static_assert(!WithFactor || kValueWidthInBits == 8,
+                  "WithFactor is only supported for kValueWidthInBits == 8");
+    assert(indices.type->byte_width() == sizeof(IndexCType));
+    assert(!(chunks_have_nulls_ || indices.MayHaveNulls()) || out_is_valid != NULLPTR);
+
+    const auto idx_length = indices.length;
+    const auto* idx = indices.GetValues<IndexCType>(1);
+
+    // Allocate vector of chunk indices for each logical index and resolve them.
+    // All indices are resolved in one go without checking the validity bitmap.
+    // This is OK as long the output corresponding to the invalid indices is not used.
+    ARROW_ASSIGN_OR_RAISE(auto chunk_index_vec_buffer,
+                          AllocateBuffer(idx_length * sizeof(IndexCType), pool_));
+    ARROW_ASSIGN_OR_RAISE(auto index_in_chunk_vec_buffer,
+                          AllocateBuffer(idx_length * sizeof(IndexCType), pool_));
+    auto* chunk_index_vec =
+        chunk_index_vec_buffer->template mutable_data_as<IndexCType>();
+    auto* index_in_chunk_vec =
+        index_in_chunk_vec_buffer->template mutable_data_as<IndexCType>();
+
+    bool enough_precision = resolver_.ResolveMany<IndexCType>(
+        /*n=*/idx_length, /*logical_index_vec=*/idx, chunk_index_vec,
+        /*chunk_hint=*/static_cast<IndexCType>(0), index_in_chunk_vec);
+    if (ARROW_PREDICT_FALSE(!enough_precision)) {
+      return Status::IndexError("IndexCType is too small");
+    }
+
+    return ExecuteImpl(indices, chunk_index_vec, index_in_chunk_vec, out_is_valid,
+                       factor);
+  }
+
+ protected:
+  /// \pre All the valid indices have been bounds-checked
+  /// \pre indices.MayHaveNulls() implies out_is_valid != nullptr
+  /// \pre Bits in out_is_valid, if provided, have to be zero initialized.
+  ///
+  /// \post The bits for the valid elements (and only those) are set in out_is_valid.
+  /// \return The number of valid elements in out.
+  Result<int64_t> ExecuteImpl(const ArraySpan& indices, const IndexCType* chunk_index_vec,
+                              const IndexCType* index_in_chunk_vec, uint8_t* out_is_valid,
+                              size_t factor) {
+    constexpr int64_t kValueWidth = kValueWidthInBits / 8;
+    const auto idx_length = indices.length;
+
+    // chunk_index/index_in_chunk is the resolved location of the index at [position].
+    auto WriteValueFromChunk = [&](int64_t position, auto chunk_index,
+                                   auto index_in_chunk) {
+      auto* src = src_chunks_[chunk_index];
+      if constexpr (kValueWidthInBits == 1) {
+        // The source values are bits, so we have to
+        // apply the internal chunk offset to src.
+        const int64_t src_offset = chunks_[chunk_index]->offset();
+        bit_util::SetBitTo(out_, position,
+                           bit_util::GetBit(src, src_offset + index_in_chunk));
+      } else {
+        if constexpr (WithFactor) {
+          memcpy(out_ + position * factor, src + index_in_chunk * factor, factor);
+        } else {
+          memcpy(out_ + position * kValueWidth, src + index_in_chunk * kValueWidth,
+                 kValueWidth);
+        }
+      }
+    };
+
+    auto WriteValue = [&](int64_t position) {
+      auto chunk_index = chunk_index_vec[position];
+      auto index_in_chunk = index_in_chunk_vec[position];
+      WriteValueFromChunk(position, chunk_index, index_in_chunk);
+    };
+
+    // Both out_if_valid and this->out_ are zero-initialized, so we can
+    // completely skip processing the nulls in the indices.
+    OptionalBitBlockCounter indices_bit_counter(indices.buffers[0].data, indices.offset,
+                                                idx_length);
+    int64_t position = 0;
+    int64_t valid_count = 0;
+    while (position < idx_length) {
+      BitBlockCount block = indices_bit_counter.NextBlock();
+      if (!chunks_have_nulls_) {
+        // Source values are never null, so things are easier
+        valid_count += block.popcount;
+        if (block.popcount == block.length) {
+          // Fastest path: neither source values nor index nulls
+          if (out_is_valid) {
+            bit_util::SetBitsTo(out_is_valid, position, block.length, true);
+          }
+          for (int64_t i = 0; i < block.length; ++i) {
+            WriteValue(position);
+            ++position;
+          }
+        } else if (block.popcount > 0) {
+          // Slow path: some indices but not all are null
+          for (int64_t i = 0; i < block.length; ++i) {
+            ARROW_COMPILER_ASSUME(indices.buffers[0].data != nullptr);
+            if (indices.IsValid(position)) {
+              // index is not null
+              bit_util::SetBit(out_is_valid, position);
+              WriteValue(position);
+            }
+            ++position;
+          }
+        } else {
+          position += block.length;
+        }
+      } else {
+        // Source values may be null, so we must do random access into src_validity
+        if (block.popcount == block.length) {
+          // Faster path: indices are not null but source values may be
+          for (int64_t i = 0; i < block.length; ++i) {
+            auto chunk_index = chunk_index_vec[position];
+            auto index_in_chunk = index_in_chunk_vec[position];
+            if (chunks_[chunk_index]->IsValid(index_in_chunk)) {
+              // value is not null
+              WriteValueFromChunk(position, chunk_index, index_in_chunk);
+              bit_util::SetBit(out_is_valid, position);
+              ++valid_count;
+            }
+            ++position;
+          }
+        } else if (block.popcount > 0) {
+          // Slow path: some but not all indices are null. Since we are doing
+          // random access in general we have to check the value nullness one by
+          // one.
+          for (int64_t i = 0; i < block.length; ++i) {
+            auto chunk_index = chunk_index_vec[position];
+            auto index_in_chunk = index_in_chunk_vec[position];
+            ARROW_COMPILER_ASSUME(indices.buffers[0].data != nullptr);
+            if (indices.IsValid(position) &&
+                chunks_[chunk_index]->IsValid(index_in_chunk)) {
+              // index is not null && value is not null
+              WriteValueFromChunk(position, chunk_index, index_in_chunk);
+              bit_util::SetBit(out_is_valid, position);
+              ++valid_count;
+            }
+            ++position;
+          }
+        } else {
+          position += block.length;
+        }
+      }
+    }
+
+    return valid_count;
+  }
+};
+
 }  // namespace arrow::internal

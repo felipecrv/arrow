@@ -505,6 +505,7 @@ set(ARROW_UTIL_SRCS
     util/float16.cc
     util/formatting.cc
     util/future.cc
+    util/gather_internal.cc
     util/hashing.cc
     util/int_util.cc
     util/io_util.cc
