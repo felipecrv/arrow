@@ -133,7 +133,9 @@ class ARROW_EXPORT ExecContext {
 ///
 /// We are not yet using this so this is mostly a placeholder for now.
 ///
-/// [1]: http://cidrdb.org/cidr2005/papers/P19.pdf
+/// [1]: Peter Boncz, Marcin Zukowski, Niels Nes.
+///      "MonetDB/X100: Hyper-Pipelining Query Execution". 2005.
+///      http://cidrdb.org/cidr2005/papers/P19.pdf
 class ARROW_EXPORT SelectionVector {
  public:
   explicit SelectionVector(std::shared_ptr<ArrayData> data);
