@@ -48,6 +48,12 @@ class TestFixedWidth : public ::testing::Test {
     return fixed_size_list(value_type, list_size);
   }
 
+  std::shared_ptr<ChunkedArray> MakeChunked(const ArraySpan& chunk) {
+    auto arr = chunk.ToArray();
+    std::vector<std::shared_ptr<Array>> chunks{arr, arr};
+    return std::make_shared<ChunkedArray>(std::move(chunks));
+  }
+
  public:
   void SetUp() override {
     bool_array_array_ = ArrayFromJSON(boolean(), "[true, false, null]");
@@ -71,16 +77,25 @@ TEST_F(TestFixedWidth, IsFixedWidth) {
 
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false, NotInt32));
   ASSERT_FALSE(IsFixedWidthLike(arr, /*force_null_count=*/false, NotBool));
+  auto chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
+  ASSERT_TRUE(IsFixedWidthLike(*chunked, NotInt32));
+  ASSERT_FALSE(IsFixedWidthLike(*chunked, NotBool));
 
   arr = ArraySpan{*int_array_array_->data()};
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false));
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/true));
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false, NotBool));
+  chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
+  ASSERT_TRUE(IsFixedWidthLike(*chunked, NotBool));
 }
 
 TEST_F(TestFixedWidth, IsFixedWidthLike) {
   auto arr = ArraySpan{*fsl_bool_array_->data()};
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false));
+  auto chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
 
   arr = ArraySpan{*fsl_int_array_->data()};
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false));
@@ -88,6 +103,8 @@ TEST_F(TestFixedWidth, IsFixedWidthLike) {
   // force_null_count=true isn't necessary because nulls at the top-level
   // of the array are allowed by IsFixedWidthLike.
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false));
+  chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
 
   arr.child_data[0].null_count = kUnknownNullCount;
   // inner nulls are not allowed by IsFixedWidthLike...
@@ -97,6 +114,9 @@ TEST_F(TestFixedWidth, IsFixedWidthLike) {
   ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/true));
   // Excluding INT32 from the internal array checks.
   ASSERT_FALSE(IsFixedWidthLike(arr, /*force_null_count=*/true, NotInt32));
+  chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
+  ASSERT_FALSE(IsFixedWidthLike(*chunked, NotInt32));
 
   arr = ArraySpan{*fsl_int_nulls_array_->data()};
   // Nulls at the top-level of the array are allowed by IsFixedWidthLike.
@@ -104,10 +124,14 @@ TEST_F(TestFixedWidth, IsFixedWidthLike) {
   // TODO(GH-10157): ArrayFromJSON uses FixedSizeListBuilder which currently
   // produces nulls on the child data if one of the list-typed elements is null.
   // ASSERT_TRUE(IsFixedWidthLike(arr, /*force_null_count=*/false));
+  // chunked = MakeChunked(arr);
+  // ASSERT_FALSE(IsFixedWidthLike(*chunked, /*force_null_count=*/true));
 
   arr = ArraySpan{*fsl_int_inner_nulls_array_->data()};
   // Inner nulls are not allowed by IsFixedWidthLike.
   ASSERT_FALSE(IsFixedWidthLike(arr, /*force_null_count=*/true));
+  chunked = MakeChunked(arr);
+  ASSERT_FALSE(IsFixedWidthLike(*chunked));
 
   arr = ArraySpan{*dict_string_array_->data()};
   // Dictionaries are considered fixed-width by is_fixed_width(), but excluded
@@ -117,6 +141,10 @@ TEST_F(TestFixedWidth, IsFixedWidthLike) {
                                /*exclude_bool_and_dictionary=*/false));
   ASSERT_FALSE(IsFixedWidthLike(arr, /*force_null_count=*/false,
                                 /*exclude_bool_and_dictionary=*/true));
+  chunked = MakeChunked(arr);
+  ASSERT_TRUE(IsFixedWidthLike(*chunked));
+  ASSERT_TRUE(IsFixedWidthLike(*chunked, /*exclude_bool_and_dictionary=*/false));
+  ASSERT_FALSE(IsFixedWidthLike(*chunked, /*exclude_bool_and_dictionary=*/true));
 }
 
 TEST_F(TestFixedWidth, MeasureWidthInBytes) {

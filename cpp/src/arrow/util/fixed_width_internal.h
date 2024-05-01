@@ -19,7 +19,9 @@
 
 #include <cstdint>
 
+#include "arrow/array.h"
 #include "arrow/array/data.h"
+#include "arrow/chunked_array.h"
 #include "arrow/type.h"
 #include "arrow/type_fwd.h"
 #include "arrow/type_traits.h"
@@ -187,6 +189,9 @@ ARROW_EXPORT bool IsFixedWidthLike(const ArraySpan& source, bool force_null_coun
 // `OffsetPointerOfFixedByteWidthValues()` can calculate this byte offset and return
 // the pointer to the first relevant byte of the innermost values buffer.
 
+ARROW_EXPORT bool IsFixedWidthLike(const ChunkedArray& source,
+                                   bool exclude_dictionary = false);
+
 /// \brief Checks if the given array has a fixed-width type or if it's an array of
 /// fixed-size list that can be flattened to an array of fixed-width values.
 ///
@@ -213,6 +218,26 @@ inline bool IsFixedWidthLike(const ArraySpan& source, bool force_null_count,
       }
       return is_fixed_width(type->id()) && extra_predicate(*type);
     }
+  }
+  return false;
+}
+
+template <class ExtraPred>
+inline bool IsFixedWidthLike(const ChunkedArray& source, ExtraPred extra_predicate) {
+  const auto* type = source.type().get();
+  // BOOL is considered fixed-width if not nested under FIXED_SIZE_LIST.
+  if (is_fixed_width(type->id()) && extra_predicate(*type)) {
+    return true;
+  }
+  if (type->id() == Type::FIXED_SIZE_LIST) {
+    // Check all the chunks.
+    for (const auto& chunk : source.chunks()) {
+      ArraySpan chunk_span{*chunk->data()};
+      if (!IsFixedWidthLike(chunk_span, /*force_null_count=*/true, extra_predicate)) {
+        return false;
+      }
+    }
+    return true;
   }
   return false;
 }

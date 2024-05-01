@@ -41,6 +41,12 @@ bool IsFixedWidthLike(const ArraySpan& source, bool force_null_count,
       });
 }
 
+bool IsFixedWidthLike(const ChunkedArray& source, bool exclude_dictionary) {
+  return IsFixedWidthLike(source, [exclude_dictionary](const DataType& type) {
+    return !exclude_dictionary || type.id() != Type::DICTIONARY;
+  });
+}
+
 static int64_t FixedWidthInBytesFallback(const FixedSizeListType& fixed_size_list_type) {
   auto* fsl = &fixed_size_list_type;
   int64_t list_size = fsl->list_size();
