@@ -593,10 +593,10 @@ class TakeMetaFunction : public MetaFunction {
   static Result<std::shared_ptr<ArrayData>> TakeCAA(
       const std::shared_ptr<ChunkedArray>& values, const Array& indices,
       const TakeOptions& options, ExecContext* ctx) {
-    ARROW_ASSIGN_OR_RAISE(auto values_array,
-                          ChunkedArrayAsArray(values, ctx->memory_pool()));
-    std::vector<Datum> args = {std::move(values_array), indices};
-    return TakeAAA(args, options, ctx);
+    // "array_take" can handle CA->A cases directly
+    // (via their VectorKernel::chunked_exec)
+    ARROW_ASSIGN_OR_RAISE(auto result, CallArrayTake({values, indices}, options, ctx));
+    return result.array();
   }
 
   static Result<std::shared_ptr<ChunkedArray>> TakeCAC(
@@ -730,6 +730,45 @@ class TakeMetaFunction : public MetaFunction {
 
 // ----------------------------------------------------------------------
 
+/// \brief Generic VectorKernel::chunked_exec for array_take(chunked_array, array) cases.
+///
+/// This function concatenates the chunks of the values and then calls the
+/// AA->A take kernel.
+///
+/// \param take_aaa_exec The AA->A take kernel to use.
+Status GenericTakeChunkedExec(ArrayKernelExec take_aaa_exec, KernelContext* ctx,
+                              const ExecBatch& batch, Datum* out) {
+  auto& args = batch.values;
+  if (args[0].kind() == Datum::CHUNKED_ARRAY && args[1].kind() == Datum::ARRAY) {
+    auto& values = args[0].chunked_array();
+    auto& indices = args[1].array();
+    ARROW_ASSIGN_OR_RAISE(auto values_array, TakeMetaFunction::ChunkedArrayAsArray(
+                                                 values, ctx->memory_pool()));
+    DCHECK_EQ(values_array->length(), batch.length);
+    std::vector<Datum> args = {std::move(values_array), indices};
+    ExecBatch array_array_batch(std::move(args), values->length());
+    DCHECK_EQ(out->kind(), Datum::ARRAY);
+    {
+      ExecSpan exec_span{array_array_batch};
+      ExecResult result;
+      result.value = out->array();
+      RETURN_NOT_OK(take_aaa_exec(ctx, exec_span, &result));
+    }
+    return Status::OK();
+  }
+  return Status::NotImplemented(
+      "Unsupported kinds for 'array_take', try using 'take': "
+      "values=",
+      args[0].ToString(), "indices=", args[1].ToString());
+}
+
+template <ArrayKernelExec TakeAAAExec>
+struct GenericTakeChunkedExecFunctor {
+  static Status Exec(KernelContext* ctx, const ExecBatch& batch, Datum* out) {
+    return GenericTakeChunkedExec(TakeAAAExec, ctx, batch, out);
+  }
+};
+
 }  // namespace
 
 const TakeOptions* GetDefaultTakeOptions() {
@@ -745,20 +784,34 @@ void PopulateTakeKernels(std::vector<SelectionKernelData>* out) {
   auto take_indices = match::Integer();
 
   *out = {
-      {InputType(match::Primitive()), take_indices, FixedWidthTakeExec},
-      {InputType(match::BinaryLike()), take_indices, VarBinaryTakeExec},
-      {InputType(match::LargeBinaryLike()), take_indices, LargeVarBinaryTakeExec},
-      {InputType(match::FixedSizeBinaryLike()), take_indices, FixedWidthTakeExec},
-      {InputType(null()), take_indices, NullTakeExec},
-      {InputType(Type::DICTIONARY), take_indices, DictionaryTake},
-      {InputType(Type::EXTENSION), take_indices, ExtensionTake},
-      {InputType(Type::LIST), take_indices, ListTakeExec},
-      {InputType(Type::LARGE_LIST), take_indices, LargeListTakeExec},
-      {InputType(Type::FIXED_SIZE_LIST), take_indices, FSLTakeExec},
-      {InputType(Type::DENSE_UNION), take_indices, DenseUnionTakeExec},
-      {InputType(Type::SPARSE_UNION), take_indices, SparseUnionTakeExec},
-      {InputType(Type::STRUCT), take_indices, StructTakeExec},
-      {InputType(Type::MAP), take_indices, MapTakeExec},
+      {InputType(match::Primitive()), take_indices, FixedWidthTakeExec,
+       GenericTakeChunkedExecFunctor<FixedWidthTakeExec>::Exec},
+      {InputType(match::BinaryLike()), take_indices, VarBinaryTakeExec,
+       GenericTakeChunkedExecFunctor<VarBinaryTakeExec>::Exec},
+      {InputType(match::LargeBinaryLike()), take_indices, LargeVarBinaryTakeExec,
+       GenericTakeChunkedExecFunctor<LargeVarBinaryTakeExec>::Exec},
+      {InputType(match::FixedSizeBinaryLike()), take_indices, FixedWidthTakeExec,
+       GenericTakeChunkedExecFunctor<FixedWidthTakeExec>::Exec},
+      {InputType(null()), take_indices, NullTakeExec,
+       GenericTakeChunkedExecFunctor<NullTakeExec>::Exec},
+      {InputType(Type::DICTIONARY), take_indices, DictionaryTake,
+       GenericTakeChunkedExecFunctor<DictionaryTake>::Exec},
+      {InputType(Type::EXTENSION), take_indices, ExtensionTake,
+       GenericTakeChunkedExecFunctor<ExtensionTake>::Exec},
+      {InputType(Type::LIST), take_indices, ListTakeExec,
+       GenericTakeChunkedExecFunctor<ListTakeExec>::Exec},
+      {InputType(Type::LARGE_LIST), take_indices, LargeListTakeExec,
+       GenericTakeChunkedExecFunctor<LargeListTakeExec>::Exec},
+      {InputType(Type::FIXED_SIZE_LIST), take_indices, FSLTakeExec,
+       GenericTakeChunkedExecFunctor<FSLTakeExec>::Exec},
+      {InputType(Type::DENSE_UNION), take_indices, DenseUnionTakeExec,
+       GenericTakeChunkedExecFunctor<DenseUnionTakeExec>::Exec},
+      {InputType(Type::SPARSE_UNION), take_indices, SparseUnionTakeExec,
+       GenericTakeChunkedExecFunctor<SparseUnionTakeExec>::Exec},
+      {InputType(Type::STRUCT), take_indices, StructTakeExec,
+       GenericTakeChunkedExecFunctor<StructTakeExec>::Exec},
+      {InputType(Type::MAP), take_indices, MapTakeExec,
+       GenericTakeChunkedExecFunctor<MapTakeExec>::Exec},
   };
 }
 
