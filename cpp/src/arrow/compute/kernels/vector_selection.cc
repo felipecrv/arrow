@@ -344,6 +344,7 @@ void RegisterVectorSelection(FunctionRegistry* registry) {
   VectorKernel take_base;
   take_base.init = TakeState::Init;
   take_base.can_execute_chunkwise = false;
+  take_base.output_chunked = false;
   RegisterSelectionFunction("array_take", array_take_doc, take_base,
                             std::move(take_kernels), GetDefaultTakeOptions(), registry);
 
