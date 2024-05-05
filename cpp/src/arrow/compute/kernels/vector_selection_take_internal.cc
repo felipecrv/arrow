@@ -400,9 +400,9 @@ struct FixedWidthTakeImpl {
            (factor > 0 && kValueWidthInBits == 8 &&  // factors are used with bytes
             static_cast<int64_t>(factor * kValueWidthInBits) == bit_width));
 #endif
-    // XXX: support values.is_chunked() case
-    assert(!values.is_chunked());
-    return Exec(ctx, values.array(), indices, out_arr, factor);
+    return values.is_chunked()
+               ? ChunkedExec(ctx, values.chunked_array(), indices, out_arr, factor)
+               : Exec(ctx, values.array(), indices, out_arr, factor);
   }
 
   static Status Exec(KernelContext* ctx, const ArraySpan& values,
@@ -433,6 +433,18 @@ struct FixedWidthTakeImpl {
     } else {
       valid_count = gather.Execute();
     }
+    out_arr->null_count = out_arr->length - valid_count;
+    return Status::OK();
+  }
+
+  static Status ChunkedExec(KernelContext* ctx, const ChunkedArray& values,
+                            const ArraySpan& indices, ArrayData* out_arr, size_t factor) {
+    auto* out_is_valid = out_arr->GetMutableValues<uint8_t>(0);
+    uint8_t* out = util::MutableFixedWidthValuesPointer(out_arr);
+    arrow::internal::GatherFromChunks<kValueWidthInBits, IndexCType, WithFactor::value>
+        gather{values, ctx->memory_pool(), out};
+    ARROW_ASSIGN_OR_RAISE(int64_t valid_count,
+                          (gather.Execute(indices, out_is_valid, factor)));
     out_arr->null_count = out_arr->length - valid_count;
     return Status::OK();
   }
@@ -530,6 +542,13 @@ Status FixedWidthTakeExec(KernelContext* ctx, const ExecSpan& batch, ExecResult*
   ValuesSpan values{batch[0].array};
   auto* out_arr = out->array_data().get();
   return FixedWidthTakeExecImpl(ctx, values, batch[1].array, out_arr);
+}
+
+Status FixedWidthTakeChunkedExec(KernelContext* ctx, const ExecBatch& batch, Datum* out) {
+  ValuesSpan values{batch[0].chunked_array()};
+  auto& indices = batch[1].array();
+  auto* out_arr = out->mutable_array();
+  return FixedWidthTakeExecImpl(ctx, values, *indices, out_arr);
 }
 
 namespace {
@@ -867,16 +886,15 @@ void PopulateTakeKernels(std::vector<SelectionKernelData>* out) {
 
   *out = {
       {InputType(match::Primitive()), take_indices, FixedWidthTakeExec,
-       // XXX: doing this for testing SpecialTakeChunkedExec
-       SpecialTakeChunkedExecFunctor<
-           FixedWidthTakeExec,
-           GenericTakeChunkedExecFunctor<FixedWidthTakeExec>::Exec>::Exec},
+       SpecialTakeChunkedExecFunctor<FixedWidthTakeExec,
+                                     FixedWidthTakeChunkedExec>::Exec},
       {InputType(match::BinaryLike()), take_indices, VarBinaryTakeExec,
        GenericTakeChunkedExecFunctor<VarBinaryTakeExec>::Exec},
       {InputType(match::LargeBinaryLike()), take_indices, LargeVarBinaryTakeExec,
        GenericTakeChunkedExecFunctor<LargeVarBinaryTakeExec>::Exec},
       {InputType(match::FixedSizeBinaryLike()), take_indices, FixedWidthTakeExec,
-       GenericTakeChunkedExecFunctor<FixedWidthTakeExec>::Exec},
+       SpecialTakeChunkedExecFunctor<FixedWidthTakeExec,
+                                     FixedWidthTakeChunkedExec>::Exec},
       {InputType(null()), take_indices, NullTakeExec,
        GenericTakeChunkedExecFunctor<NullTakeExec>::Exec},
       {InputType(Type::DICTIONARY), take_indices, DictionaryTake,
