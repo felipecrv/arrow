@@ -376,7 +376,7 @@ void AssertDatumsApproxEqual(const Datum& expected, const Datum& actual, bool ve
 
 std::shared_ptr<Array> ArrayFromJSON(const std::shared_ptr<DataType>& type,
                                      std::string_view json) {
-  EXPECT_OK_AND_ASSIGN(auto out, ipc::internal::json::ArrayFromJSON(type, json));
+  EXPECT_OK_AND_ASSIGN(auto out, ipc::json::ArrayFromJSON(type, json));
   return out;
 }
 
@@ -384,15 +384,14 @@ std::shared_ptr<Array> DictArrayFromJSON(const std::shared_ptr<DataType>& type,
                                          std::string_view indices_json,
                                          std::string_view dictionary_json) {
   std::shared_ptr<Array> out;
-  ABORT_NOT_OK(
-      ipc::internal::json::DictArrayFromJSON(type, indices_json, dictionary_json, &out));
+  ABORT_NOT_OK(ipc::json::DictArrayFromJSON(type, indices_json, dictionary_json, &out));
   return out;
 }
 
 std::shared_ptr<ChunkedArray> ChunkedArrayFromJSON(const std::shared_ptr<DataType>& type,
                                                    const std::vector<std::string>& json) {
   std::shared_ptr<ChunkedArray> out;
-  ABORT_NOT_OK(ipc::internal::json::ChunkedArrayFromJSON(type, json, &out));
+  ABORT_NOT_OK(ipc::json::ChunkedArrayFromJSON(type, json, &out));
   return out;
 }
 
@@ -409,7 +408,7 @@ std::shared_ptr<RecordBatch> RecordBatchFromJSON(const std::shared_ptr<Schema>& 
 std::shared_ptr<Scalar> ScalarFromJSON(const std::shared_ptr<DataType>& type,
                                        std::string_view json) {
   std::shared_ptr<Scalar> out;
-  ABORT_NOT_OK(ipc::internal::json::ScalarFromJSON(type, json, &out));
+  ABORT_NOT_OK(ipc::json::ScalarFromJSON(type, json, &out));
   return out;
 }
 
@@ -417,8 +416,7 @@ std::shared_ptr<Scalar> DictScalarFromJSON(const std::shared_ptr<DataType>& type
                                            std::string_view index_json,
                                            std::string_view dictionary_json) {
   std::shared_ptr<Scalar> out;
-  ABORT_NOT_OK(
-      ipc::internal::json::DictScalarFromJSON(type, index_json, dictionary_json, &out));
+  ABORT_NOT_OK(ipc::json::DictScalarFromJSON(type, index_json, dictionary_json, &out));
   return out;
 }
 

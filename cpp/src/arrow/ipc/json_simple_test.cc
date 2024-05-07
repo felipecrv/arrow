@@ -56,7 +56,6 @@ namespace arrow {
 using util::Float16;
 
 namespace ipc {
-namespace internal {
 namespace json {
 
 using ::arrow::internal::BytesToBits;
@@ -1525,6 +1524,5 @@ TEST(TestDictScalarFromJSON, Errors) {
 }
 
 }  // namespace json
-}  // namespace internal
 }  // namespace ipc
 }  // namespace arrow

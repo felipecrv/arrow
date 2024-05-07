@@ -41,7 +41,7 @@ namespace ipc {
 
 using ::arrow::internal::CreateDir;
 using ::arrow::internal::PlatformFilename;
-using internal::json::ArrayFromJSON;
+using json::ArrayFromJSON;
 
 Result<std::shared_ptr<RecordBatch>> MakeExtensionBatch() {
   auto array = ExampleUuid();
