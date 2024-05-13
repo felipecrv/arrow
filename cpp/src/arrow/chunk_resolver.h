@@ -23,6 +23,7 @@
 #include <limits>
 #include <vector>
 
+#include "arrow/buffer.h"
 #include "arrow/type_fwd.h"
 #include "arrow/util/macros.h"
 
@@ -74,6 +75,48 @@ struct ChunkLocation {
 
   bool operator==(ChunkLocation other) const {
     return chunk_index == other.chunk_index && index_in_chunk == other.index_in_chunk;
+  }
+};
+
+class ChunkLocationVec {
+ public:
+  std::unique_ptr<Buffer> chunk_index_vec_buffer = NULLPTR;
+  std::unique_ptr<Buffer> index_in_chunk_vec_buffer = NULLPTR;
+
+  ChunkLocationVec() = default;
+  ChunkLocationVec(const ChunkLocationVec&) = delete;
+  ChunkLocationVec& operator=(const ChunkLocationVec&) = delete;
+  ChunkLocationVec(ChunkLocationVec&&) = default;
+  ChunkLocationVec& operator=(ChunkLocationVec&&) = default;
+  ~ChunkLocationVec();
+
+ private:
+  Status AllocateBuffers(int64_t n, int64_t sizeof_index_type, MemoryPool* pool);
+
+ public:
+  template <typename IndexType>
+  Status AllocateBuffers(int64_t n, MemoryPool* pool) {
+    return AllocateBuffers(n, sizeof(IndexType), pool);
+  }
+
+  template <typename IndexType>
+  IndexType* mutable_chunk_index_vec() {
+    return chunk_index_vec_buffer->mutable_data_as<IndexType>();
+  }
+
+  template <typename IndexType>
+  IndexType* mutable_index_in_chunk_vec() {
+    return index_in_chunk_vec_buffer->mutable_data_as<IndexType>();
+  }
+
+  template <typename IndexType>
+  const IndexType* chunk_index_vec() const {
+    return chunk_index_vec_buffer->data_as<IndexType>();
+  }
+
+  template <typename IndexType>
+  const IndexType* index_in_chunk_vec() const {
+    return index_in_chunk_vec_buffer->data_as<IndexType>();
   }
 };
 
@@ -162,6 +205,36 @@ struct ARROW_EXPORT ChunkResolver {
     const auto chunk_index =
         ResolveChunkIndex</*StoreCachedChunk=*/false>(index, hint.chunk_index);
     return ChunkLocation{*this, chunk_index, index - offsets_[chunk_index]};
+  }
+
+  /// \brief Resolve `n` logical indices to chunk indices and within-chunk indices.
+  ///
+  /// \pre logical_index_vec[i] < n (for valid chunk index results)
+  /// \post chunk_hint in [0, chunks.size()]
+  /// \post out.chunk_index_vec()[i] in [0, chunks.size()] for i in [0, n)
+  /// \post if logical_index_vec[i] >= chunked_array.length(), then
+  ///       out.chunk_index_vec()[i] == chunks.size()
+  ///       and out.index_in_chunk_vec()[i] is undefined (can be out-of-bounds)
+  ///
+  /// \param n The number of logical indices to resolve
+  /// \param logical_index_vec The logical indices to resolve
+  /// \param chunk_hint 0 or the last chunk_index produced by ResolveMany
+  template <typename IndexType>
+  std::enable_if_t<std::is_unsigned_v<IndexType>, Result<ChunkLocationVec>> ResolveMany(
+      int64_t n, const IndexType* logical_index_vec, MemoryPool* pool,
+      IndexType chunk_hint = 0) const {
+    ChunkLocationVec chunk_location_vec;
+    RETURN_NOT_OK(chunk_location_vec.AllocateBuffers<IndexType>(n, pool));
+    // All indices are resolved in one go without checking the validity bitmap.
+    // This is OK as long the output corresponding to the invalid indices is not used.
+    auto* chunk_index_vec = chunk_location_vec.mutable_chunk_index_vec<IndexType>();
+    auto* index_in_chunk_vec = chunk_location_vec.mutable_index_in_chunk_vec<IndexType>();
+    bool enough_precision = ResolveMany<IndexType>(n, logical_index_vec, chunk_index_vec,
+                                                   chunk_hint, index_in_chunk_vec);
+    if (ARROW_PREDICT_FALSE(!enough_precision)) {
+      return Status::IndexError("IndexCType is too small");
+    }
+    return chunk_location_vec;
   }
 
   /// \brief Resolve `n` logical indices to chunk indices.

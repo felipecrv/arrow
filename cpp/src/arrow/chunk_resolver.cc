@@ -28,6 +28,17 @@
 
 namespace arrow::internal {
 
+ChunkLocationVec::~ChunkLocationVec() = default;
+
+Status ChunkLocationVec::AllocateBuffers(int64_t n, int64_t sizeof_index_type,
+                                         MemoryPool* pool) {
+  ARROW_ASSIGN_OR_RAISE(chunk_index_vec_buffer,
+                        AllocateBuffer(n * sizeof_index_type, pool));
+  ARROW_ASSIGN_OR_RAISE(index_in_chunk_vec_buffer,
+                        AllocateBuffer(n * sizeof_index_type, pool));
+  return Status::OK();
+}
+
 namespace {
 template <typename T>
 int64_t GetLength(const T& array) {

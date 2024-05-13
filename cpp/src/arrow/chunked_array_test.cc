@@ -373,19 +373,16 @@ class TestChunkResolverMany : public ::testing::Test {
 
   Result<std::vector<ChunkLocation>> ResolveMany(
       const ChunkResolver& resolver, const std::vector<IndexType>& logical_index_vec) {
+    auto* pool = default_memory_pool();
     const size_t n = logical_index_vec.size();
-    std::vector<IndexType> chunk_index_vec;
-    chunk_index_vec.resize(n);
-    std::vector<IndexType> index_in_chunk_vec;
-    index_in_chunk_vec.resize(n);
-    bool valid = resolver.ResolveMany<IndexType>(
-        static_cast<int64_t>(n), logical_index_vec.data(), chunk_index_vec.data(), 0,
-        index_in_chunk_vec.data());
-    if (ARROW_PREDICT_FALSE(!valid)) {
-      return Status::Invalid("index type doesn't fit possible chunk indexes");
-    }
+    ARROW_ASSIGN_OR_RAISE(
+        auto chunk_location_vec,
+        resolver.ResolveMany(static_cast<int64_t>(n), logical_index_vec.data(), pool));
     std::vector<ChunkLocation> locations;
     locations.reserve(n);
+    auto* chunk_index_vec = chunk_location_vec.template chunk_index_vec<IndexType>();
+    auto* index_in_chunk_vec =
+        chunk_location_vec.template index_in_chunk_vec<IndexType>();
     for (size_t i = 0; i < n; i++) {
       auto chunk_index = static_cast<int64_t>(chunk_index_vec[i]);
       auto index_in_chunk = static_cast<int64_t>(index_in_chunk_vec[i]);
