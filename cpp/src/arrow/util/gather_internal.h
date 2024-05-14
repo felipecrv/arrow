@@ -40,6 +40,21 @@
 
 namespace arrow::internal {
 inline namespace gather_internal {
+// class ValiditySpan {
+//   const ArraySpan& array_;
+
+//  public:
+//   explicit ValiditySpan(const ArraySpan& array) : array_(array) {}
+
+//   bool MayHaveNulls() const { return array_.MayHaveNulls(); }
+
+//   /// \pre MayHaveNulls() returns true
+//   ARROW_FORCE_INLINE bool IsValid(int64_t position) const {
+//     ARROW_COMPILER_ASSUME(array_.buffers[0].data != nullptr);
+//     return array_.IsValid(position);
+//   }
+// };
+
 // CRTP [1] base class for Gather that provides a gathering loop in terms of
 // Write*() methods that must be implemented by the derived class.
 //
@@ -58,6 +73,13 @@ class GatherBaseCRTP {
   GatherBaseCRTP& operator=(GatherBaseCRTP&&) = delete;
 
  protected:
+  template <typename IndexCType>
+  bool IsSrcValid(const ArraySpan& src_validity, const IndexCType* idx,
+                  int64_t position) const {
+    ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
+    return src_validity.IsValid(idx[position]);
+  }
+
   ARROW_FORCE_INLINE int64_t ExecuteNoNulls(int64_t idx_length) {
     auto* self = static_cast<GatherImpl*>(this);
     for (int64_t position = 0; position < idx_length; position++) {
@@ -68,8 +90,9 @@ class GatherBaseCRTP {
 
   // See derived Gather classes below for the meaning of the parameters, pre and
   // post-conditions.
-  template <bool kOutputIsZeroInitialized, typename IndexCType>
-  ARROW_FORCE_INLINE int64_t ExecuteWithNulls(const ArraySpan& src_validity,
+  template <bool kOutputIsZeroInitialized, typename IndexCType,
+            class ValiditySpan = ArraySpan>
+  ARROW_FORCE_INLINE int64_t ExecuteWithNulls(const ValiditySpan& src_validity,
                                               int64_t idx_length, const IndexCType* idx,
                                               const ArraySpan& idx_validity,
                                               uint8_t* out_is_valid) {
@@ -108,12 +131,11 @@ class GatherBaseCRTP {
           position += block.length;
         }
       } else {
-        // Source values may be null, so we must do random access into src_validity
+        // Source values may be null, so we must do random access with IsSrcValid()
         if (block.popcount == block.length) {
           // Faster path: indices are not null but source values may be
           for (int64_t i = 0; i < block.length; ++i) {
-            ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
-            if (src_validity.IsValid(idx[position])) {
+            if (self->IsSrcValid(src_validity, idx, position)) {
               // value is not null
               self->WriteValue(position);
               bit_util::SetBit(out_is_valid, position);
@@ -128,9 +150,9 @@ class GatherBaseCRTP {
           // random access in general we have to check the value nullness one by
           // one.
           for (int64_t i = 0; i < block.length; ++i) {
-            ARROW_COMPILER_ASSUME(src_validity.buffers[0].data != nullptr);
             ARROW_COMPILER_ASSUME(idx_validity.buffers[0].data != nullptr);
-            if (idx_validity.IsValid(position) && src_validity.IsValid(idx[position])) {
+            if (idx_validity.IsValid(position) &&
+                self->IsSrcValid(src_validity, idx, position)) {
               // index is not null && value is not null
               self->WriteValue(position);
               bit_util::SetBit(out_is_valid, position);
@@ -290,39 +312,75 @@ class Gather</*kValueWidthInBits=*/1, IndexCType, /*kWithFactor=*/false>
 };
 }  // namespace gather_internal
 
-class GatherFromChunksBase {
- protected:
+class GatherFromChunksState {
+ private:
   const ArrayVector& chunks_;
-  const ChunkResolver resolver_;
-  MemoryPool* pool_;
-
   const bool chunks_have_nulls_;
-  /// \brief Pre-computed OffsetPointerOfFixedWidthValues() of every chunk.
-  ///
-  /// If the chunk is a BOOL array, this is the pointer to the first byte of the
-  /// data buffer and the internal chunk offset in bits has to be applied.
+  const bool chunk_values_are_byte_sized_;
+
+  // If chunk_values_are_byte_sized_ is false, src_residual_bit_offsets_[i] is used
+  // to store the bit offset of the first byte (0-7) in src_chunks_[i].
+  //
+  // NOTE: If chunk_values_are_byte_sized_ is true, src_residual_bit_offsets_ is empty.
+  std::vector<int> src_residual_bit_offsets_;
+  // Pre-computed pointers to the start of the values in each chunk.
   std::vector<const uint8_t*> src_chunks_;
+
   uint8_t* out_;
 
   /// \pre out is zero-initialized
-  GatherFromChunksBase(const ArrayVector& chunks, bool chunks_have_nulls,
-                       MemoryPool* pool, uint8_t* out) noexcept;
+  GatherFromChunksState(const DataType& type, const ArrayVector& chunks,
+                        bool chunks_have_nulls, uint8_t* out) noexcept;
 
  public:
   /// \pre out is zero-initialized
-  GatherFromChunksBase(const ChunkedArray& chunked_array, MemoryPool* pool,
-                       uint8_t* out) noexcept;
+  GatherFromChunksState(const ChunkedArray& chunked_array, uint8_t* out) noexcept;
+  ~GatherFromChunksState();
 
-  ~GatherFromChunksBase();
+  bool MayHaveNulls() const { return chunks_have_nulls_; }
+
+  template <typename IndexCType>
+  Status InitWithIndices(int64_t idx_length, const IndexCType* idx, MemoryPool* pool) {
+    // Allocate vector of chunk indices for each logical index and resolve them.
+    // All indices are resolved in one go without checking the validity bitmap.
+    // This is OK as long the output corresponding to the invalid indices is not used.
+    ARROW_ASSIGN_OR_RAISE(chunk_index_vec_buffer_,
+                          AllocateBuffer(idx_length * sizeof(IndexCType), pool));
+    ARROW_ASSIGN_OR_RAISE(index_in_chunk_vec_buffer_,
+                          AllocateBuffer(idx_length * sizeof(IndexCType), pool));
+
+    auto* chunk_index_vec =
+        chunk_index_vec_buffer_->template mutable_data_as<IndexCType>();
+    auto* index_in_chunk_vec =
+        index_in_chunk_vec_buffer_->template mutable_data_as<IndexCType>();
+
+    ChunkResolver resolver(chunks_);
+    bool enough_precision = resolver.ResolveMany<IndexCType>(
+        /*n=*/idx_length, /*logical_index_vec=*/idx, chunk_index_vec,
+        /*chunk_hint=*/static_cast<IndexCType>(0), index_in_chunk_vec);
+    if (ARROW_PREDICT_FALSE(!enough_precision)) {
+      return Status::IndexError("IndexCType is too small");
+    }
+    return Status::OK();
+  }
+
+  template <typename IndexCType>
+  bool IsSrcValid(const ArraySpan& src_validity, const IndexCType* idx,
+                  int64_t position) const {}
 };
 
 template <int kValueWidthInBits, typename IndexCType, bool WithFactor>
-class GatherFromChunks : public GatherFromChunksBase {
+class GatherFromChunks
+    : public GatherBaseCRTP<GatherFromChunks<kValueWidthInBits, IndexCType, WithFactor>> {
+ private:
+  GatherFromChunksState state_;
+  MemoryPool* pool_;
+
  public:
   /// \pre out is zero-initialized
   GatherFromChunks(const ChunkedArray& chunked_array, MemoryPool* pool,
                    uint8_t* out) noexcept
-      : GatherFromChunksBase(chunked_array, pool, out) {}
+      : state_(chunked_array, out), pool_(pool) {}
 
   Result<int64_t> Execute(const ArraySpan& indices, uint8_t* out_is_valid,
                           int64_t factor) {
@@ -336,25 +394,11 @@ class GatherFromChunks : public GatherFromChunksBase {
     const auto idx_length = indices.length;
     const auto* idx = indices.GetValues<IndexCType>(1);
 
-    // Allocate vector of chunk indices for each logical index and resolve them.
-    // All indices are resolved in one go without checking the validity bitmap.
-    // This is OK as long the output corresponding to the invalid indices is not used.
-    ARROW_ASSIGN_OR_RAISE(auto chunk_index_vec_buffer,
-                          AllocateBuffer(idx_length * sizeof(IndexCType), pool_));
-    ARROW_ASSIGN_OR_RAISE(auto index_in_chunk_vec_buffer,
-                          AllocateBuffer(idx_length * sizeof(IndexCType), pool_));
-    auto* chunk_index_vec =
-        chunk_index_vec_buffer->template mutable_data_as<IndexCType>();
-    auto* index_in_chunk_vec =
-        index_in_chunk_vec_buffer->template mutable_data_as<IndexCType>();
+    ChunkResolver resolver(state_.chunks_);
+    ARROW_ASSIGN_OR_RAISE(auto chunk_location_vec,
+                          resolver.ResolveMany<IndexCType>(idx_length, idx, pool_));
 
-    bool enough_precision = resolver_.ResolveMany<IndexCType>(
-        /*n=*/idx_length, /*logical_index_vec=*/idx, chunk_index_vec,
-        /*chunk_hint=*/static_cast<IndexCType>(0), index_in_chunk_vec);
-    if (ARROW_PREDICT_FALSE(!enough_precision)) {
-      return Status::IndexError("IndexCType is too small");
-    }
-
+    RETURN_NOT_OK(state_.InitWithIndices(idx_length, idx, pool_));
     return ExecuteImpl(indices, chunk_index_vec, index_in_chunk_vec, out_is_valid,
                        factor);
   }

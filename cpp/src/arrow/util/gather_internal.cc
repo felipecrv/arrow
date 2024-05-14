@@ -27,33 +27,39 @@
 
 namespace arrow::internal {
 
-GatherFromChunksBase::GatherFromChunksBase(const ArrayVector& chunks,
-                                           bool chunks_have_nulls, MemoryPool* pool,
-                                           uint8_t* out) noexcept
+GatherFromChunksState::GatherFromChunksState(const DataType& type,
+                                             const ArrayVector& chunks,
+                                             bool chunks_have_nulls,
+                                             uint8_t* out) noexcept
     : chunks_(chunks),
-      resolver_(chunks),
-      pool_(pool),
       chunks_have_nulls_(chunks_have_nulls),
+      chunk_values_are_byte_sized_(util::FixedWidthInBytes(type) >= 0),
       out_(out) {
-  DCHECK(pool);
+  if (chunk_values_are_byte_sized_) {
+    src_residual_bit_offsets_.resize(chunks.size());
+  }
   src_chunks_.resize(chunks.size());
+
   for (size_t i = 0; i < chunks.size(); ++i) {
     const ArraySpan chunk{*chunks[i]->data()};
-    if (chunk.type->id() == Type::BOOL) {
-      src_chunks_[i] = chunk.GetValues<uint8_t>(1, 0);
+    DCHECK(chunk.type->Equals(type));
+    DCHECK(util::IsFixedWidthLike(chunk));
+
+    auto offset_pointer = util::OffsetPointerOfFixedBitWidthValues(chunk);
+    if (chunk_values_are_byte_sized_) {
+      src_residual_bit_offsets_[i] = offset_pointer.first;
     } else {
-      DCHECK(util::IsFixedWidthLike(chunk, /*force_null_count=*/false,
-                                    /*exclude_bool_and_dictionary=*/true));
-      src_chunks_[i] = util::OffsetPointerOfFixedByteWidthValues(chunk);
+      DCHECK_EQ(offset_pointer.first, 0);
     }
+    src_chunks_[i] = offset_pointer.second;
   }
 }
 
-GatherFromChunksBase::GatherFromChunksBase(const ChunkedArray& chunked_array,
-                                           MemoryPool* pool, uint8_t* out) noexcept
-    : GatherFromChunksBase(chunked_array.chunks(), chunked_array.null_count() != 0, pool,
-                           out) {}
+GatherFromChunksState::GatherFromChunksState(const ChunkedArray& chunked_array,
+                                             uint8_t* out) noexcept
+    : GatherFromChunksState(*chunked_array.type(), chunked_array.chunks(),
+                            chunked_array.null_count() != 0, out) {}
 
-GatherFromChunksBase::~GatherFromChunksBase() = default;
+GatherFromChunksState::~GatherFromChunksState() = default;
 
 }  // namespace arrow::internal
