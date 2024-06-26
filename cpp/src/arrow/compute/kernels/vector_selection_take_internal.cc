@@ -374,7 +374,6 @@ struct ChunkedFixedWidthValuesSpan {
   std::vector<const uint8_t*> src_chunks;
 
  public:
-  ARROW_NOINLINE
   explicit ChunkedFixedWidthValuesSpan(const ChunkedArray& values) {
     const bool chunk_values_are_bit_sized = values.type()->id() == Type::BOOL;
     DCHECK_EQ(chunk_values_are_bit_sized, util::FixedWidthInBytes(*values.type()) == -1);
@@ -397,7 +396,6 @@ struct ChunkedFixedWidthValuesSpan {
     }
   }
 
-  ARROW_NOINLINE
   ~ChunkedFixedWidthValuesSpan() = default;
 
   const int* src_residual_bit_offsets_data() const {
@@ -412,7 +410,6 @@ struct ResolvedIndicesState {
  private:
   std::unique_ptr<Buffer> chunk_location_buffer = NULLPTR;
 
-  ARROW_NOINLINE
   Status AllocateBuffers(int64_t n_indices, int64_t sizeof_index_type, MemoryPool* pool) {
     ARROW_ASSIGN_OR_RAISE(chunk_location_buffer,
                           AllocateBuffer(2 * n_indices * sizeof_index_type, pool));
@@ -420,7 +417,6 @@ struct ResolvedIndicesState {
   }
 
  public:
-  ARROW_NOINLINE
   ~ResolvedIndicesState() = default;
 
   template <typename IndexCType>
