@@ -149,8 +149,10 @@ class ARROW_FLIGHT_SQL_EXPORT FlightSqlClient {
   /// \param[in] options Per-RPC options
   /// \param[in] ticket The flight ticket to use
   /// \return The returned RecordBatchReader
-  virtual arrow::Result<std::unique_ptr<FlightStreamReader>> DoGet(
-      const FlightCallOptions& options, const Ticket& ticket);
+  arrow::Result<std::unique_ptr<FlightStreamReader>> DoGet(
+      const FlightCallOptions& options, const Ticket& ticket) {
+    return impl_->DoGet(options, ticket);
+  }
 
   /// \brief Request a list of tables.
   /// \param[in] options                   RPC-layer hints for this call.
@@ -285,13 +287,13 @@ class ARROW_FLIGHT_SQL_EXPORT FlightSqlClient {
       const Transaction& transaction = no_transaction());
 
   /// \brief Call the underlying Flight client's GetFlightInfo.
-  virtual arrow::Result<std::unique_ptr<FlightInfo>> GetFlightInfo(
+  arrow::Result<std::unique_ptr<FlightInfo>> GetFlightInfo(
       const FlightCallOptions& options, const FlightDescriptor& descriptor) {
     return impl_->GetFlightInfo(options, descriptor);
   }
 
   /// \brief Call the underlying Flight client's GetSchema.
-  virtual arrow::Result<std::unique_ptr<SchemaResult>> GetSchema(
+  arrow::Result<std::unique_ptr<SchemaResult>> GetSchema(
       const FlightCallOptions& options, const FlightDescriptor& descriptor) {
     return impl_->GetSchema(options, descriptor);
   }
@@ -406,14 +408,14 @@ class ARROW_FLIGHT_SQL_EXPORT FlightSqlClient {
   }
 
   /// \brief Explicitly shut down and clean up the client.
-  Status Close();
+  Status Close() { return impl_->Close(); }
 
   /// \brief Wrapper around FlightClient::DoGet.
   ///
   /// \internal
   /// Don't call this directly.
   /// \endinternal
-  virtual ::arrow::Result<FlightClient::DoPutResult> DoPut(
+  ::arrow::Result<FlightClient::DoPutResult> DoPut(
       const FlightCallOptions& options, const FlightDescriptor& descriptor,
       const std::shared_ptr<Schema>& schema) {
     return impl_->DoPut(options, descriptor, schema);
@@ -424,7 +426,7 @@ class ARROW_FLIGHT_SQL_EXPORT FlightSqlClient {
   /// \internal
   /// Don't call this directly.
   /// \endinternal
-  virtual ::arrow::Result<std::unique_ptr<ResultStream>> DoAction(
+  ::arrow::Result<std::unique_ptr<ResultStream>> DoAction(
       const FlightCallOptions& options, const Action& action) {
     return impl_->DoAction(options, action);
   }

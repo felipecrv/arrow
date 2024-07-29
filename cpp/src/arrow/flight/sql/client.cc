@@ -548,11 +548,6 @@ arrow::Result<std::unique_ptr<SchemaResult>> FlightSqlClient::GetSqlInfoSchema(
   return GetSchemaForCommand(this, options, command);
 }
 
-arrow::Result<std::unique_ptr<FlightStreamReader>> FlightSqlClient::DoGet(
-    const FlightCallOptions& options, const Ticket& ticket) {
-  return impl_->DoGet(options, ticket);
-}
-
 arrow::Result<std::shared_ptr<PreparedStatement>> FlightSqlClient::Prepare(
     const FlightCallOptions& options, const std::string& query,
     const Transaction& transaction) {
@@ -855,8 +850,6 @@ Status FlightSqlClient::Rollback(const FlightCallOptions& options,
   }
   return Status::IOError("Server returned unknown result ", result.result());
 }
-
-Status FlightSqlClient::Close() { return impl_->Close(); }
 
 std::ostream& operator<<(std::ostream& os, CancelResult result) {
   switch (result) {
