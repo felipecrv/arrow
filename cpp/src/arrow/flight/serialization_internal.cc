@@ -157,6 +157,30 @@ bool IsTypeUrlOfProtobufType(std::string_view type_url, std::string_view full_ty
 
 }  // namespace
 
+bool UnpackFromSerializedProtobufAny(std::string_view serialized,
+                                     google::protobuf::Message* out) {
+  if (ARROW_PREDICT_FALSE(serialized.size() > std::numeric_limits<int>::max())) {
+    return false;
+  }
+  auto* data = reinterpret_cast<const uint8_t*>(serialized.data());
+  const int limit = static_cast<int>(serialized.size());
+
+  const char* any_type_url;
+  int any_type_url_length;
+  const void* any_value;
+  int any_value_length;
+  if (!ParseSerializedProtobufAny(data, limit, &any_type_url, &any_type_url_length,
+                                  &any_value, &any_value_length)) {
+    return false;
+  }
+  std::string_view type_url(any_type_url, any_type_url_length);
+  if (!IsTypeUrlOfProtobufType(type_url, out->GetTypeName()) ||
+      !out->ParseFromArray(any_value, any_value_length)) {
+    return false;
+  }
+  return true;
+}
+
 Status PackProtoCommand(const google::protobuf::Message& command, FlightDescriptor* out) {
   std::string buf;
   RETURN_NOT_OK(PackToAnyAndSerialize(command, &buf));
@@ -174,18 +198,9 @@ Status PackProtoAction(std::string action_type, const google::protobuf::Message&
 }
 
 Status UnpackProtoAction(const Action& action, google::protobuf::Message* out) {
-  const char* any_type_url;
-  int any_type_url_length;
-  const void* any_value;
-  int any_value_length;
-  if (!ParseSerializedProtobufAny(action.body->data(),
-                                  static_cast<int>(action.body->size()), &any_type_url,
-                                  &any_type_url_length, &any_value, &any_value_length)) {
-    return Status::Invalid("Unable to parse action ", action.type);
-  }
-  std::string_view type_url(any_type_url, any_type_url_length);
-  if (!IsTypeUrlOfProtobufType(type_url, out->GetTypeName()) ||
-      !out->ParseFromArray(any_value, any_value_length)) {
+  std::string_view body(reinterpret_cast<const char*>(action.body->data()),
+                        action.body->size());
+  if (!UnpackFromSerializedProtobufAny(body, out)) {
     return Status::Invalid("Unable to unpack ", out->GetTypeName());
   }
   return Status::OK();

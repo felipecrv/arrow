@@ -74,6 +74,9 @@ static constexpr char kAuthHeader[] = "authorization";
 ARROW_FLIGHT_EXPORT
 Status SchemaToString(const Schema& schema, std::string* out);
 
+bool UnpackFromSerializedProtobufAny(std::string_view serialized,
+                                     google::protobuf::Message* out);
+
 /// \brief Wraps a protobuf message representing a Flight command in a FlightDescriptor.
 ///
 /// A `FlightDescriptor` can carry a string representing a command in any
