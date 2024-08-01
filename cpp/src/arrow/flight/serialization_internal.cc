@@ -21,6 +21,7 @@
 #include <string>
 
 #include <google/protobuf/any.pb.h>
+#include <google/protobuf/io/coded_stream.h>
 
 #include "arrow/buffer.h"
 #include "arrow/flight/protocol_internal.h"
@@ -44,6 +45,8 @@ namespace internal {
 
 namespace {
 
+constexpr char kTypeGoogleApisComPrefix[] = "type.googleapis.com/";
+
 Status PackToAnyAndSerialize(const google::protobuf::Message& command, std::string* out) {
   google::protobuf::Any any;
 #if PROTOBUF_VERSION >= 3015000
@@ -62,6 +65,94 @@ Status PackToAnyAndSerialize(const google::protobuf::Message& command, std::stri
   any.SerializeToString(out);
 #endif
   return Status::OK();
+}
+
+// https://github.com/protocolbuffers/protobuf/blob/2c5fa078d8e86e5f4bd34e6f4c9ea9e8d7d4d44a/src/google/protobuf/any.pb.cc#L226
+bool ParseSerializedProtobufAny(const uint8_t* data, int limit, const char** type_url,
+                                int* type_url_length, const void** value,
+                                int* value_length) {
+  static const char* kEmpty = "";
+  *type_url = kEmpty;
+  *type_url_length = 0;
+  *value = kEmpty;
+  *value_length = 0;
+  google::protobuf::io::CodedInputStream is(data, limit);
+
+#define FAIL_OTHERWISE(expr)          \
+  if (ARROW_PREDICT_FALSE(!(expr))) { \
+    return false;                     \
+  }
+
+  // Technically, Protobuf fields can come in any order and mixed with unknown
+  // fields. This function will handle *out of order* fields without any problem,
+  // but not unknown fields if they are mixed with field 1 and 2.
+  //
+  // If an unknown field is encountered before the `type_url`, the function will
+  // return false. Unknown fields after the `type_url` field are ignored and `value`
+  // assumed to be an empty string if not seen yet (in proto3, omitted fields receive
+  // the default value for their type).
+  //
+  // This is safe because `google.protobuf.Any` is not likely to have new fields
+  // in the future and even if it gets new fields, there is no reason for protobuf
+  // implementations to sneakily put the `value` (field 2) *after* a newly added
+  // field number 3.
+#define HANDLE_UNUSUAL                  \
+  if ((tag == 0) || ((tag & 7) == 4)) { \
+    return *type_url_length > 0;        \
+  }                                     \
+  return false
+
+  while (!is.ConsumedEntireMessage()) {
+    const uint32_t tag = is.ReadTag();
+    // tag == 0 is handled by the default case in the switch
+    const uint32_t field_number = tag >> 3;
+    const void* ptr;
+    int size;
+    switch (field_number) {
+      case 1:
+        // string type_url = 1;
+        if (ARROW_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          FAIL_OTHERWISE(is.ReadVarintSizeAsInt(type_url_length));
+          is.GetDirectBufferPointerInline(&ptr, &size);
+          FAIL_OTHERWISE(size >= *type_url_length);
+          FAIL_OTHERWISE(is.Skip(*type_url_length));
+          // UTF-8 validation is skipped as it's not necessary for the
+          // purpose of this field: to be compared against constant strings.
+          *type_url = static_cast<const char*>(ptr);
+        } else {
+          HANDLE_UNUSUAL;
+        }
+        break;
+      case 2:
+        // bytes value = 2;
+        if (ARROW_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          FAIL_OTHERWISE(is.ReadVarintSizeAsInt(value_length));
+          is.GetDirectBufferPointerInline(&ptr, &size);
+          FAIL_OTHERWISE(size >= *value_length);
+          FAIL_OTHERWISE(is.Skip(*value_length));
+          *value = ptr;
+        } else {
+          HANDLE_UNUSUAL;
+        }
+        break;
+      default:
+        HANDLE_UNUSUAL;
+        break;
+    }
+  }
+#undef FAIL_OTHERWISE
+#undef HANDLE_UNUSUAL
+
+  return true;
+}
+
+bool IsTypeUrlOfProtobufType(std::string_view type_url, std::string_view full_type_name) {
+  const size_t kPrefixLength = strlen(kTypeGoogleApisComPrefix);
+  if (type_url.size() != strlen(kTypeGoogleApisComPrefix) + full_type_name.size()) {
+    return false;
+  }
+  return type_url.substr(0, kPrefixLength) == kTypeGoogleApisComPrefix &&
+         type_url.substr(kPrefixLength) == full_type_name;
 }
 
 }  // namespace
@@ -83,11 +174,18 @@ Status PackProtoAction(std::string action_type, const google::protobuf::Message&
 }
 
 Status UnpackProtoAction(const Action& action, google::protobuf::Message* out) {
-  google::protobuf::Any any;
-  if (!any.ParseFromArray(action.body->data(), static_cast<int>(action.body->size()))) {
+  const char* any_type_url;
+  int any_type_url_length;
+  const void* any_value;
+  int any_value_length;
+  if (!ParseSerializedProtobufAny(action.body->data(),
+                                  static_cast<int>(action.body->size()), &any_type_url,
+                                  &any_type_url_length, &any_value, &any_value_length)) {
     return Status::Invalid("Unable to parse action ", action.type);
   }
-  if (!any.UnpackTo(out)) {
+  std::string_view type_url(any_type_url, any_type_url_length);
+  if (!IsTypeUrlOfProtobufType(type_url, out->GetTypeName()) ||
+      !out->ParseFromArray(any_value, any_value_length)) {
     return Status::Invalid("Unable to unpack ", out->GetTypeName());
   }
   return Status::OK();
