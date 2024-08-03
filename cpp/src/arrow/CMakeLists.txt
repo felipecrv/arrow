@@ -1256,6 +1256,36 @@ if(ARROW_FILESYSTEM)
 endif()
 
 if(ARROW_FLIGHT)
+  set(FLIGHT_PROTO_PATH "${ARROW_SOURCE_DIR}/../format")
+  set(FLIGHT_PROTO "${ARROW_SOURCE_DIR}/../format/Flight.proto")
+
+  set(FLIGHT_GENERATED_PROTO_FILES
+      "${CMAKE_CURRENT_BINARY_DIR}/flight/Flight.pb.cc"
+      "${CMAKE_CURRENT_BINARY_DIR}/flight/Flight.pb.h"
+      "${CMAKE_CURRENT_BINARY_DIR}/flight/Flight.grpc.pb.cc"
+      "${CMAKE_CURRENT_BINARY_DIR}/flight/Flight.grpc.pb.h")
+
+  set(FLIGHT_PROTO_DEPENDS ${FLIGHT_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF}
+                           gRPC::grpc_cpp_plugin)
+
+  set(FLIGHT_PROTOC_COMMAND ${ARROW_PROTOBUF_PROTOC} "-I${FLIGHT_PROTO_PATH}")
+  if(Protobuf_VERSION VERSION_LESS 3.15)
+    list(APPEND FLIGHT_PROTOC_COMMAND "--experimental_allow_proto3_optional")
+  endif()
+  add_custom_command(OUTPUT ${FLIGHT_GENERATED_PROTO_FILES}
+                     DEPENDS ${FLIGHT_PROTO_DEPENDS} ARGS
+                     COMMAND ${FLIGHT_PROTOC_COMMAND}
+                             "--cpp_out=${CMAKE_CURRENT_BINARY_DIR}/flight"
+                             "${FLIGHT_PROTO}"
+                     COMMAND ${FLIGHT_PROTOC_COMMAND}
+                             "--grpc_out=${CMAKE_CURRENT_BINARY_DIR}/flight"
+                             "--plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>"
+                             "${FLIGHT_PROTO}")
+
+  set_source_files_properties(${FLIGHT_GENERATED_PROTO_FILES} PROPERTIES GENERATED TRUE)
+
+  add_custom_target(flight_grpc_gen ALL DEPENDS ${FLIGHT_GENERATED_PROTO_FILES})
+
   add_subdirectory(flight)
   add_subdirectory(flight/ng)
 endif()

@@ -76,12 +76,13 @@ list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS gRPC::grpc++)
 set(FLIGHT_PROTO_PATH "${ARROW_SOURCE_DIR}/../format")
 set(FLIGHT_PROTO "${ARROW_SOURCE_DIR}/../format/Flight.proto")
 
+# TODO: make a separate CMakeLists for the protobufs
 # ng: Already created by arrow/flight
-set(FLIGHT_GENERATED_PROTO_FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.cc"
-    "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.cc"
-    "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.h")
+# set(FLIGHT_GENERATED_PROTO_FILES
+#     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.cc"
+#     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.h"
+#     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.cc"
+#     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.h")
 
 set(PROTO_DEPENDS ${FLIGHT_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF} gRPC::grpc_cpp_plugin)
 
@@ -164,17 +165,17 @@ if(ARROW_WITH_OPENTELEMETRY)
   list(APPEND ARROW_NG_FLIGHT_SRCS otel_logging.cc)
 endif()
 
-if(MSVC)
-  # Protobuf generated files trigger spurious warnings on MSVC.
-  foreach(GENERATED_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.cc"
-                           "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.h")
-    # Suppress missing dll-interface warning
-    set_source_files_properties("${GENERATED_SOURCE}"
-                                PROPERTIES COMPILE_OPTIONS "/wd4251"
-                                           GENERATED TRUE
-                                           SKIP_UNITY_BUILD_INCLUSION TRUE)
-  endforeach()
-endif()
+# if(MSVC)
+#   # Protobuf generated files trigger spurious warnings on MSVC.
+#   foreach(GENERATED_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.cc"
+#                            "${CMAKE_CURRENT_BINARY_DIR}/../Flight.pb.h")
+#     # Suppress missing dll-interface warning
+#     set_source_files_properties("${GENERATED_SOURCE}"
+#                                 PROPERTIES COMPILE_OPTIONS "/wd4251"
+#                                            GENERATED TRUE
+#                                            SKIP_UNITY_BUILD_INCLUSION TRUE)
+#   endforeach()
+# endif()
 
 add_arrow_lib(arrow_flight_ng
               CMAKE_PACKAGE_NAME
