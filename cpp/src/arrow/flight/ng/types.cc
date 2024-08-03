@@ -1,0 +1,47 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// #include "arrow/flight/types.h"
+
+#include <cstdint>
+#include <limits>
+
+#include "arrow/flight/ng/types.h"
+#include "arrow/status.h"
+
+namespace arrow::flight {
+inline namespace ng {
+
+FlightPayload::FlightPayload() = default;
+FlightPayload::~FlightPayload() = default;
+
+Status FlightPayload::Validate() const {
+  static constexpr int64_t kInt32Max = std::numeric_limits<int32_t>::max();
+  if (descriptor && descriptor->size() > kInt32Max) {
+    return Status::CapacityError("Descriptor size overflow (>= 2**31)");
+  }
+  if (app_metadata && app_metadata->size() > kInt32Max) {
+    return Status::CapacityError("app_metadata size overflow (>= 2**31)");
+  }
+  if (ipc_message.body_length > kInt32Max) {
+    return Status::Invalid("Cannot send record batches exceeding 2GiB yet");
+  }
+  return Status::OK();
+}
+
+}  // namespace ng
+}  // namespace arrow::flight

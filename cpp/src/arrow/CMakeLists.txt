@@ -1257,6 +1257,7 @@ endif()
 
 if(ARROW_FLIGHT)
   add_subdirectory(flight)
+  add_subdirectory(flight/ng)
 endif()
 
 if(ARROW_IPC)
