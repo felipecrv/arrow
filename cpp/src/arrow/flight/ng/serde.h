@@ -16,3 +16,21 @@
 // under the License.
 
 #pragma once
+
+#include <functional>
+#include <string_view>
+
+#include "arrow/flight/ng/flight_fwd.h"
+#include "arrow/status.h"
+
+namespace arrow::flight {
+inline namespace ng {
+
+using FlightDataVisitor = std::function<Status(
+    protocol::FlightDescriptor* mutable_descriptor, std::string_view data_header,
+    std::string_view app_metadata, std::string_view data_body)>;
+/// \brief Visit a serialized protocol::FlightData message.
+Status VisitFlightData(const std::string_view, FlightDataVisitor visitor);
+
+}  // namespace ng
+}  // namespace arrow::flight

@@ -16,3 +16,23 @@
 // under the License.
 
 #pragma once
+
+namespace arrow::flight {
+// Forward declarations of Protocol Buffers types {{{
+namespace protocol {
+class FlightData;
+class FlightDescriptor;
+class PutResult;
+}  // namespace protocol
+// }}}
+
+inline namespace ng {
+struct FlightPayload;
+}  // namespace ng
+}  // namespace arrow::flight
+
+// Forward declarations of gRPC types {{{
+namespace grpc {
+class ByteBuffer;
+}  // namespace grpc
+// }}}

@@ -146,6 +146,7 @@ set(ARROW_FLIGHT_NG_SRCS
     # cookie_internal.cc
     flight.cc
     # middleware.cc
+    serde.cc
     # serialization_internal.cc
     # server.cc
     # server_auth.cc

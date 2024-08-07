@@ -16,13 +16,3 @@
 // under the License.
 
 #include "arrow/flight/ng/flight.h"
-
-namespace arrow::flight {
-inline namespace ng {
-
-void VisitFlightData(const protocol::FlightData& data, FlightDataVisitor visitor) {
-  //
-}
-
-}  // namespace ng
-}  // namespace arrow::flight
