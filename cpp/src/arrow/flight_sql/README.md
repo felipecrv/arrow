@@ -104,14 +104,14 @@ definition of the Flight SQL protocol instead of being hand-written.
     [x] │   │   ├── customize_grpc.h
     [ ] │   │   ├── grpc_client.cc
     [ ] │   │   ├── grpc_client.h
-    [ ] │   │   ├── grpc_server.cc
+    [x] │   │   ├── grpc_server.cc  (mostly ignored)
     [x] │   │   ├── grpc_server.h
     [ ] │   │   ├── protocol_grpc_internal.cc
     [ ] │   │   ├── protocol_grpc_internal.h
     [ ] │   │   ├── serialization_internal.cc
     [?] │   │   ├── serialization_internal.h
     [ ] │   │   ├── util_internal.cc
-    [ ] │   │   └── util_internal.h
+    [x] │   │   └── util_internal.h (GRPC_RETURN_NOT_OK, GRPC_RETURN_NOT_GRPC_OK)
     [ ] │   └── ucx
     [ ] │       ├── CMakeLists.txt
     [ ] │       ├── flight_transport_ucx_test.cc
