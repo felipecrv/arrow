@@ -20,9 +20,32 @@
 namespace arrow::flight {
 // Forward declarations of Protocol Buffers types {{{
 namespace protocol {
+class Action;
+class ActionType;
+class BasicAuth;
+class CancelFlightInfoRequest;
+class CancelFlightInfoResult;
+class CloseSessionRequest;
+class CloseSessionResult;
+class Criteria;
+class Empty;
 class FlightData;
 class FlightDescriptor;
+class FlightEndpoint;
+class FlightInfo;
+class GetSessionOptionsRequest;
+class GetSessionOptionsResult;
+class HandshakeRequest;
+class HandshakeResponse;
+class Location;
+class PollInfo;
 class PutResult;
+class RenewFlightEndpointRequest;
+class Result;
+class SchemaResult;
+class SetSessionOptionsRequest;
+class SetSessionOptionsResult;
+class Ticket;
 }  // namespace protocol
 // }}}
 
@@ -34,5 +57,6 @@ struct FlightPayload;
 // Forward declarations of gRPC types {{{
 namespace grpc {
 class ByteBuffer;
+class ServerContext;
 }  // namespace grpc
 // }}}
