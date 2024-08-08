@@ -45,7 +45,6 @@ namespace transport {
 namespace grpc {
 
 namespace pb = arrow::flight::protocol;
-using FlightService = pb::FlightService;
 using ServerContext = ::grpc::ServerContext;
 template <typename T>
 using ServerWriter = ::grpc::ServerWriter<T>;
@@ -239,7 +238,7 @@ class ExchangeDataStream final : public internal::ServerDataStream {
 
 // The gRPC service implementation, which forwards calls to the Flight
 // service and bridges between the Flight transport API and gRPC.
-class GrpcServiceHandler final : public FlightService::Service {
+class GrpcServiceHandler final : public pb::FlightService::Service {
  public:
   GrpcServiceHandler(
       std::shared_ptr<ServerAuthHandler> auth_handler,
