@@ -121,21 +121,21 @@ if(ARROW_FLIGHT)
                     "${CMAKE_CURRENT_BINARY_DIR}/helloworld.grpc.pb.cc")
 
   if(ARROW_FLIGHT_SQL)
-    if(ARROW_BUILD_SHARED AND ARROW_GRPC_USE_SHARED)
-      set(FLIGHT_SQL_EXAMPLES_LINK_LIBS arrow_flight_sql_shared)
-    else()
-      set(FLIGHT_SQL_EXAMPLES_LINK_LIBS arrow_flight_sql_static)
-    endif()
+    # if(ARROW_BUILD_SHARED AND ARROW_GRPC_USE_SHARED)
+    #   set(FLIGHT_SQL_EXAMPLES_LINK_LIBS arrow_flight_sql_shared)
+    # else()
+    #   set(FLIGHT_SQL_EXAMPLES_LINK_LIBS arrow_flight_sql_static)
+    # endif()
 
-    add_arrow_example(flight_sql_example
-                      DEPENDENCIES
-                      flight-sql-test-server
-                      EXTRA_LINK_LIBS
-                      ${FLIGHT_EXAMPLES_LINK_LIBS}
-                      ${FLIGHT_SQL_EXAMPLES_LINK_LIBS}
-                      gRPC::grpc++
-                      ${ARROW_PROTOBUF_LIBPROTOBUF}
-                      ${GFLAGS_LIBRARIES})
+    # add_arrow_example(flight_sql_example
+    #                   DEPENDENCIES
+    #                   flight-sql-test-server
+    #                   EXTRA_LINK_LIBS
+    #                   ${FLIGHT_EXAMPLES_LINK_LIBS}
+    #                   ${FLIGHT_SQL_EXAMPLES_LINK_LIBS}
+    #                   gRPC::grpc++
+    #                   ${ARROW_PROTOBUF_LIBPROTOBUF}
+    #                   ${GFLAGS_LIBRARIES})
   endif()
 endif()
 
