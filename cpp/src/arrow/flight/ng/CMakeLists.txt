@@ -145,6 +145,7 @@ set(ARROW_FLIGHT_NG_SRCS
     # client_tracing_middleware.cc
     # cookie_internal.cc
     flight.cc
+    grpc_serde.cc
     # middleware.cc
     serde.cc
     # serialization_internal.cc

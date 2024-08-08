@@ -48,6 +48,8 @@ struct ARROW_FLIGHT_EXPORT FlightPayload {
 
   /// \brief Check that the payload can be written to the wire.
   Status Validate() const;
+
+  void Clear();
 };
 
 }  // namespace ng

@@ -43,5 +43,11 @@ Status FlightPayload::Validate() const {
   return Status::OK();
 }
 
+void FlightPayload::Clear() {
+  descriptor.reset();
+  app_metadata.reset();
+  ipc_message = ipc::IpcPayload{};
+}
+
 }  // namespace ng
 }  // namespace arrow::flight
