@@ -29,7 +29,6 @@
 
 namespace arrow::flight {
 inline namespace ng {
-namespace grpc {
 
 /// \brief Convert an Arrow status to a gRPC status.
 inline ::grpc::Status ToRawGrpcStatus(::arrow::Status arrow_status) {
@@ -106,12 +105,12 @@ inline ::grpc::Status ToGrpcStatus(const Status& arrow_status,
   return status;
 }
 
-#define GRPC_RETURN_NOT_OK(expr)                                   \
-  do {                                                             \
-    ::arrow::Status _s = (expr);                                   \
-    if (ARROW_PREDICT_FALSE(!_s.ok())) {                           \
-      return ::arrow::flight::ng::grpc::ToGrpcStatus(_s, context); \
-    }                                                              \
+#define GRPC_RETURN_NOT_OK(expr)                         \
+  do {                                                   \
+    ::arrow::Status _s = (expr);                         \
+    if (ARROW_PREDICT_FALSE(!_s.ok())) {                 \
+      return ::arrow::flight::ToGrpcStatus(_s, context); \
+    }                                                    \
   } while (0)
 
 #define GRPC_RETURN_NOT_GRPC_OK(expr)    \
@@ -123,37 +122,37 @@ inline ::grpc::Status ToGrpcStatus(const Status& arrow_status,
   } while (0)
 
 template <typename R>
-class Reader : public flight::ng::Reader<R> {
+class GrpcReader : public flight::Reader<R> {
  private:
   ::grpc::internal::ReaderInterface<R>* reader_;
 
  public:
-  explicit Reader(::grpc::internal::ReaderInterface<R>* reader) : reader_(reader) {}
-  ~Reader() override = default;
+  explicit GrpcReader(::grpc::internal::ReaderInterface<R>* reader) : reader_(reader) {}
+  ~GrpcReader() override = default;
   bool Read(R* out_value) override { return reader_->Read(out_value); }
 };
 
 template <typename W>
-class Writer : public flight::ng::Writer<W> {
+class GrpcWriter : public flight::Writer<W> {
  private:
   ::grpc::internal::WriterInterface<W>* writer_;
 
  public:
-  explicit Writer(::grpc::internal::WriterInterface<W>* writer) : writer_(writer) {}
-  ~Writer() override = default;
+  explicit GrpcWriter(::grpc::internal::WriterInterface<W>* writer) : writer_(writer) {}
+  ~GrpcWriter() override = default;
   bool Write(const W& value) override { return writer_->Write(value); }
 };
 
 template <>
-class Reader<FlightPayload> : public flight::ng::Reader<FlightPayload> {
+class GrpcReader<FlightPayload> : public flight::Reader<FlightPayload> {
  private:
   ::grpc::internal::ReaderInterface<protocol::FlightData>* reader_;
 
  public:
-  explicit Reader(::grpc::internal::ReaderInterface<protocol::FlightData>* reader)
+  explicit GrpcReader(::grpc::internal::ReaderInterface<protocol::FlightData>* reader)
       : reader_(reader) {}
 
-  ~Reader() override = default;
+  ~GrpcReader() override = default;
 
   bool Read(FlightPayload* out_value) override {
     auto* out_as_flight_data = reinterpret_cast<protocol::FlightData*>(out_value);
@@ -162,15 +161,15 @@ class Reader<FlightPayload> : public flight::ng::Reader<FlightPayload> {
 };
 
 template <>
-class Writer<FlightPayload> : public flight::ng::Writer<FlightPayload> {
+class GrpcWriter<FlightPayload> : public flight::Writer<FlightPayload> {
  private:
   ::grpc::internal::WriterInterface<protocol::FlightData>* writer_;
 
  public:
-  explicit Writer(::grpc::internal::WriterInterface<protocol::FlightData>* writer)
+  explicit GrpcWriter(::grpc::internal::WriterInterface<protocol::FlightData>* writer)
       : writer_(writer) {}
 
-  ~Writer() override = default;
+  ~GrpcWriter() override = default;
 
   bool Write(const FlightPayload& value) override {
     auto& value_as_flight_data = reinterpret_cast<const protocol::FlightData&>(value);
@@ -178,21 +177,21 @@ class Writer<FlightPayload> : public flight::ng::Writer<FlightPayload> {
   }
 };
 
-/// \brief gRPC Flight service implementation.
-class FlightServiceImpl : public protocol::FlightService::Service {
+/// \brief gRPC Flight server implementation.
+class GrpcFlightServer : public protocol::FlightService::Service {
  private:
-  std::unique_ptr<FlightService> impl_;
+  std::unique_ptr<FlightServer> impl_;
 
  public:
-  explicit FlightServiceImpl(std::unique_ptr<FlightService> impl)
+  explicit GrpcFlightServer(std::unique_ptr<FlightServer> impl)
       : impl_(std::move(impl)) {}
 
   ::grpc::Status Handshake(
       ::grpc::ServerContext* context,
       ::grpc::ServerReaderWriter<protocol::HandshakeResponse, protocol::HandshakeRequest>*
           stream) override {
-    Reader<protocol::HandshakeRequest> reader(stream);
-    Writer<protocol::HandshakeResponse> writer(stream);
+    GrpcReader<protocol::HandshakeRequest> reader(stream);
+    GrpcWriter<protocol::HandshakeResponse> writer(stream);
     GRPC_RETURN_NOT_OK(impl_->Handshake(context, &reader, &writer));
     return ::grpc::Status::OK;
   }
@@ -200,7 +199,7 @@ class FlightServiceImpl : public protocol::FlightService::Service {
   ::grpc::Status ListFlights(
       ::grpc::ServerContext* context, const protocol::Criteria* request,
       ::grpc::ServerWriter<protocol::FlightInfo>* writer) override {
-    Writer<protocol::FlightInfo> response_writer(writer);
+    GrpcWriter<protocol::FlightInfo> response_writer(writer);
     GRPC_RETURN_NOT_OK(impl_->ListFlights(context, request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -221,7 +220,7 @@ class FlightServiceImpl : public protocol::FlightService::Service {
 
   ::grpc::Status DoGet(::grpc::ServerContext* context, const protocol::Ticket* request,
                        ::grpc::ServerWriter<protocol::FlightData>* writer) override {
-    Writer<FlightPayload> response_writer(writer);
+    GrpcWriter<FlightPayload> response_writer(writer);
     GRPC_RETURN_NOT_OK(impl_->DoGet(context, *request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -230,8 +229,8 @@ class FlightServiceImpl : public protocol::FlightService::Service {
       ::grpc::ServerContext* context,
       ::grpc::ServerReaderWriter<protocol::PutResult, protocol::FlightData>* stream)
       override {
-    Reader<FlightPayload> reader(stream);
-    Writer<protocol::PutResult> writer(stream);
+    GrpcReader<FlightPayload> reader(stream);
+    GrpcWriter<protocol::PutResult> writer(stream);
     GRPC_RETURN_NOT_OK(impl_->DoPut(context, &reader, &writer));
     return ::grpc::Status::OK;
   }
@@ -240,15 +239,15 @@ class FlightServiceImpl : public protocol::FlightService::Service {
       ::grpc::ServerContext* context,
       ::grpc::ServerReaderWriter<protocol::FlightData, protocol::FlightData>* stream)
       override {
-    Reader<FlightPayload> reader(stream);
-    Writer<FlightPayload> writer(stream);
+    GrpcReader<FlightPayload> reader(stream);
+    GrpcWriter<FlightPayload> writer(stream);
     GRPC_RETURN_NOT_OK(impl_->DoExchange(context, &reader, &writer));
     return ::grpc::Status::OK;
   }
 
   ::grpc::Status DoAction(::grpc::ServerContext* context, const protocol::Action* request,
                           ::grpc::ServerWriter<protocol::Result>* writer) override {
-    Writer<protocol::Result> response_writer(writer);
+    GrpcWriter<protocol::Result> response_writer(writer);
     GRPC_RETURN_NOT_OK(impl_->DoAction(context, *request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -256,12 +255,11 @@ class FlightServiceImpl : public protocol::FlightService::Service {
   ::grpc::Status ListActions(
       ::grpc::ServerContext* context, const protocol::Empty* request,
       ::grpc::ServerWriter<protocol::ActionType>* writer) override {
-    Writer<protocol::ActionType> response_writer(writer);
+    GrpcWriter<protocol::ActionType> response_writer(writer);
     GRPC_RETURN_NOT_OK(impl_->ListActions(context, request, &response_writer));
     return ::grpc::Status::OK;
   }
 };
 
-}  // namespace grpc
 }  // namespace ng
 }  // namespace arrow::flight

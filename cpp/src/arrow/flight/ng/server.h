@@ -37,9 +37,9 @@ class Writer {
   virtual bool Write(const W& value) = 0;
 };
 
-class FlightService {
+class FlightServer {
  public:
-  virtual ~FlightService() = default;
+  virtual ~FlightServer() = default;
 
   /// Handshake between client and server. Depending on the server, the
   /// handshake may be required to determine the token that should be

@@ -54,13 +54,10 @@
 namespace arrow::flight {
 inline namespace ng {
 // Flight+gRPC Zero-Copy SerDe {{{
-namespace grpc {
 ::grpc::Status FlightDataSerialize(const arrow::flight::FlightPayload& msg,
                                    ::grpc::ByteBuffer* out, bool* own_buffer);
 ::grpc::Status FlightDataDeserialize(::grpc::ByteBuffer* buffer,
                                      arrow::flight::FlightPayload* out);
-
-}  // namespace grpc
 // }}}
 }  // namespace ng
 }  // namespace arrow::flight
@@ -78,12 +75,12 @@ class SerializationTraits<arrow::flight::protocol::FlightData> {
  public:
   static Status Serialize(const MessageType& msg, ByteBuffer* bb, bool* own_buffer) {
     auto& flight_payload = reinterpret_cast<const arrow::flight::ng::FlightPayload&>(msg);
-    return arrow::flight::grpc::FlightDataSerialize(flight_payload, bb, own_buffer);
+    return arrow::flight::FlightDataSerialize(flight_payload, bb, own_buffer);
   }
 
   static Status Deserialize(ByteBuffer* buffer, MessageType* msg) {
     auto* flight_payload = reinterpret_cast<arrow::flight::ng::FlightPayload*>(msg);
-    return arrow::flight::grpc::FlightDataDeserialize(buffer, flight_payload);
+    return arrow::flight::FlightDataDeserialize(buffer, flight_payload);
   }
 };
 }  // namespace grpc
@@ -91,7 +88,6 @@ class SerializationTraits<arrow::flight::protocol::FlightData> {
 
 namespace arrow::flight {
 inline namespace ng {
-namespace grpc {
 
 // Pointer bitcast explanation: grpc::*Writer<T>::Write() and grpc::*Reader<T>::Read()
 // both take a T* argument (here protocol::FlightData*).  But they don't do anything
@@ -149,6 +145,5 @@ std::enable_if_t<std::is_same_v<R, protocol::FlightData>, bool> ServerReaderWrit
   return reader->Read(out_data);
 }
 
-}  // namespace grpc
 }  // namespace ng
 }  // namespace arrow::flight

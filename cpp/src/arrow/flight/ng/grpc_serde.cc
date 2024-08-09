@@ -55,7 +55,6 @@ namespace protobuf = google::protobuf;
 
 namespace arrow::flight {
 inline namespace ng {
-namespace grpc {
 
 // Internal wrapper for gRPC ByteBuffer so its memory can be exposed to Arrow
 // consumers with zero-copy.
@@ -191,6 +190,5 @@ arrow::Result<::grpc::Slice> SliceFromBuffer(const std::shared_ptr<Buffer>& buf)
   return {};
 }
 
-}  // namespace grpc
 }  // namespace ng
 }  // namespace arrow::flight
