@@ -18,24 +18,11 @@
 #pragma once
 
 #include "arrow/flight/ng/flight_fwd.h"
+#include "arrow/flight/ng/serde.h"
 #include "arrow/status.h"
 
 namespace arrow::flight {
 inline namespace ng {
-
-template <typename R>
-class Reader {
- public:
-  virtual ~Reader() = default;
-  virtual bool Read(R* out_value) = 0;
-};
-
-template <typename W>
-class Writer {
- public:
-  virtual ~Writer() = default;
-  virtual bool Write(const W& value) = 0;
-};
 
 class FlightServer {
  public:

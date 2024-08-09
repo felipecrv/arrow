@@ -26,6 +26,20 @@
 namespace arrow::flight {
 inline namespace ng {
 
+template <typename R>
+class Reader {
+ public:
+  virtual ~Reader() = default;
+  virtual bool Read(R* out_value) = 0;
+};
+
+template <typename W>
+class Writer {
+ public:
+  virtual ~Writer() = default;
+  virtual bool Write(const W& value) = 0;
+};
+
 using FlightDataVisitor = std::function<Status(
     protocol::FlightDescriptor* mutable_descriptor, std::string_view data_header,
     std::string_view app_metadata, std::string_view data_body)>;
