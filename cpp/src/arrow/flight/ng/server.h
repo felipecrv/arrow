@@ -17,6 +17,11 @@
 
 #pragma once
 
+#include <memory>
+
+#include <grpcpp/security/auth_context.h>
+#include <grpcpp/server_context.h>
+
 #include "arrow/flight/ng/flight_fwd.h"
 #include "arrow/flight/ng/serde.h"
 #include "arrow/status.h"
@@ -24,9 +29,76 @@
 namespace arrow::flight {
 inline namespace ng {
 
-class FlightServer {
+/// \brief An authentication handler for a FlightServer.
+///
+/// Authentication includes both an initial negotiation and a per-call token
+/// validation. Implementations may choose to use either or both mechanisms.
+/// An implementation may need to track some state (e.g. a mapping of client
+/// tokens to authenticated identities).
+class ServerAuthHandler {
  public:
-  virtual ~FlightServer() = default;
+  virtual ~ServerAuthHandler() = default;
+
+  /// \brief Authenticate the client on initial connection.
+  ///
+  /// The handler implementation can send and read responses from
+  /// the client at any time.
+  ///
+  /// \param[in] reader The reader for messages from the client.
+  /// \param[in] writer The writer for messages to the client.
+  /// \return Status OK if this authentication succeeded.
+  virtual Status Handshake(::grpc::ServerContext* context,
+                           Reader<protocol::HandshakeRequest>* reader,
+                           Writer<protocol::HandshakeResponse>* writer) {
+    return ReadAllHandshakeRequests(reader, [](uint64_t protocol_version,
+                                               const std::string& payload) {
+      ARROW_UNUSED(protocol_version);
+      ARROW_UNUSED(payload);
+      return Status::NotImplemented("ServerAuthHandler::Handshake() isn't implemented");
+    });
+  }
+
+  /// \brief Validate auth information (e.g. a token) per-call.
+  ///
+  /// \return Status OK if the token is valid, any other status if
+  ///         validation failed.
+  virtual Status Validate(::grpc::ServerContext* context) {
+    return Status::NotImplemented("ServerAuthHandler::Validate() isn't implemented");
+  }
+};
+
+/// \brief An INSECURE authentication mechanism that simply trusts any client.
+class TrustAuthHandler final : public ServerAuthHandler {
+ public:
+  ~TrustAuthHandler() override = default;
+
+  static std::unique_ptr<TrustAuthHandler> Make() {
+    return std::make_unique<TrustAuthHandler>();
+  }
+
+  Status Handshake(::grpc::ServerContext* context,
+                   Reader<protocol::HandshakeRequest>* reader,
+                   Writer<protocol::HandshakeResponse>* writer) override {
+    return ReadAllHandshakeRequests(
+        reader, [](uint64_t protocol_version, const std::string& payload) {
+          ARROW_UNUSED(protocol_version);
+          ARROW_UNUSED(payload);
+          return Status::OK();
+        });
+  }
+
+  Status Validate(::grpc::ServerContext* context) override { return Status::OK(); }
+};
+
+class FlightServer {
+ private:
+  std::unique_ptr<ServerAuthHandler> auth_handler_;
+
+ public:
+  explicit FlightServer(std::unique_ptr<ServerAuthHandler> auth_handler);
+  virtual ~FlightServer();
+
+  ServerAuthHandler& auth_handler() { return *auth_handler_; }
 
   /// Handshake between client and server. Depending on the server, the
   /// handshake may be required to determine the token that should be

@@ -23,6 +23,7 @@
 #include "arrow/flight/Flight.pb.h"
 #include "arrow/flight/ng/serde.h"
 #include "arrow/status.h"
+#include "arrow/util/macros.h"
 
 namespace arrow::flight {
 inline namespace ng {
@@ -134,6 +135,20 @@ Status VisitFlightData(const std::string_view serialized, FlightDataVisitor visi
     return Status::Invalid("Failed to parse arrow.flight.protocol.FlightData");
   }
   return visitor(&flight_descriptor, data_header, app_metadata, data_body);
+}
+
+Status ReadAllHandshakeRequests(Reader<protocol::HandshakeRequest>* reader,
+                                HandshakeRequestVisitor visitor) {
+  protocol::HandshakeRequest request;
+  if (!reader->Read(&request)) {
+    return Status::Cancelled();
+  }
+  do {
+    const auto protocol_version = request.protocol_version();
+    const auto& payload = request.payload();
+    ARROW_RETURN_NOT_OK(visitor(protocol_version, payload));
+  } while (reader->Read(&request));
+  return Status::OK();
 }
 
 }  // namespace ng

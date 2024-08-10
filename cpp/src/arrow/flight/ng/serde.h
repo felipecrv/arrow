@@ -40,11 +40,23 @@ class Writer {
   virtual bool Write(const W& value) = 0;
 };
 
+/// \brief Zero-copy visitor for serialized protocol.FlightData messages.
 using FlightDataVisitor = std::function<Status(
     protocol::FlightDescriptor* mutable_descriptor, std::string_view data_header,
     std::string_view app_metadata, std::string_view data_body)>;
-/// \brief Visit a serialized protocol::FlightData message.
+/// \brief Visit a serialized protocol.FlightData message.
 Status VisitFlightData(const std::string_view, FlightDataVisitor visitor);
+
+using HandshakeRequestVisitor =
+    std::function<Status(uint64_t protocol_version, const std::string& payload)>;
+/// \brief Read all serialized HandshakeRequest messages from a reader.
+///
+/// \param[in] reader The reader to read from.
+/// \param[in] visitor The visitor to call for each message.
+/// \return Status::Cancelled() if it can't read at least one message, the first
+///         non-OK status returned by the visitor, or Status::OK();
+Status ReadAllHandshakeRequests(Reader<protocol::HandshakeRequest>* reader,
+                                HandshakeRequestVisitor visitor);
 
 }  // namespace ng
 }  // namespace arrow::flight
