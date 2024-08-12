@@ -35,6 +35,9 @@ inline namespace ng {
 /// validation. Implementations may choose to use either or both mechanisms.
 /// An implementation may need to track some state (e.g. a mapping of client
 /// tokens to authenticated identities).
+///
+/// Implementations should be thread-safe as handshake and validation may be
+/// called from different threads depending on the server implementation.
 class ServerAuthHandler {
  public:
   virtual ~ServerAuthHandler() = default;
