@@ -31,14 +31,13 @@ FlightServer::~FlightServer() = default;
 Status FlightServer::Handshake(::grpc::ServerContext* context,
                                Reader<protocol::HandshakeRequest>* reader,
                                Writer<protocol::HandshakeResponse>* writer) {
-  return auth_handler_->Handshake(context, reader, writer);
+  return auth_handler_->HandshakeGrpc(context, reader, writer);
 }
 
 Status FlightServer::ListFlights(::grpc::ServerContext* context,
                                  const protocol::Criteria* criteria,
                                  Writer<protocol::FlightInfo>* writer) {
-  RETURN_NOT_OK(auth_handler_->Validate(context));
-  return Status::OK();
+  return Status::NotImplemented("FlightServer::ListFlights()");
 }
 
 Status FlightServer::GetFlightInfo(::grpc::ServerContext* context,

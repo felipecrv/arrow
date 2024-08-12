@@ -200,6 +200,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
       ::grpc::ServerContext* context, const protocol::Criteria* request,
       ::grpc::ServerWriter<protocol::FlightInfo>* writer) override {
     GrpcWriter<protocol::FlightInfo> response_writer(writer);
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->ListFlights(context, request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -207,7 +208,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
   ::grpc::Status GetFlightInfo(::grpc::ServerContext* context,
                                const protocol::FlightDescriptor* request,
                                protocol::FlightInfo* response) override {
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->GetFlightInfo(context, *request, response));
     return ::grpc::Status::OK;
   }
@@ -215,7 +216,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
   ::grpc::Status GetSchema(::grpc::ServerContext* context,
                            const protocol::FlightDescriptor* request,
                            protocol::SchemaResult* response) override {
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->GetSchema(context, *request, response));
     return ::grpc::Status::OK;
   }
@@ -223,7 +224,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
   ::grpc::Status DoGet(::grpc::ServerContext* context, const protocol::Ticket* request,
                        ::grpc::ServerWriter<protocol::FlightData>* writer) override {
     GrpcWriter<FlightPayload> response_writer(writer);
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->DoGet(context, *request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -234,7 +235,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
       override {
     GrpcReader<FlightPayload> reader(stream);
     GrpcWriter<protocol::PutResult> writer(stream);
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->DoPut(context, &reader, &writer));
     return ::grpc::Status::OK;
   }
@@ -252,7 +253,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
   ::grpc::Status DoAction(::grpc::ServerContext* context, const protocol::Action* request,
                           ::grpc::ServerWriter<protocol::Result>* writer) override {
     GrpcWriter<protocol::Result> response_writer(writer);
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->DoAction(context, *request, &response_writer));
     return ::grpc::Status::OK;
   }
@@ -261,7 +262,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
       ::grpc::ServerContext* context, const protocol::Empty* request,
       ::grpc::ServerWriter<protocol::ActionType>* writer) override {
     GrpcWriter<protocol::ActionType> response_writer(writer);
-    GRPC_RETURN_NOT_OK(impl_->auth_handler().Validate(context));
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->ListActions(context, request, &response_writer));
     return ::grpc::Status::OK;
   }

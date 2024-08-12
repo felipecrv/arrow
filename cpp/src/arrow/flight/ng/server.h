@@ -47,9 +47,9 @@ class ServerAuthHandler {
   /// \param[in] reader The reader for messages from the client.
   /// \param[in] writer The writer for messages to the client.
   /// \return Status OK if this authentication succeeded.
-  virtual Status Handshake(::grpc::ServerContext* context,
-                           Reader<protocol::HandshakeRequest>* reader,
-                           Writer<protocol::HandshakeResponse>* writer) {
+  virtual Status HandshakeGrpc(::grpc::ServerContext* context,
+                               Reader<protocol::HandshakeRequest>* reader,
+                               Writer<protocol::HandshakeResponse>* writer) {
     return ReadAllHandshakeRequests(reader, [](uint64_t protocol_version,
                                                const std::string& payload) {
       ARROW_UNUSED(protocol_version);
@@ -58,16 +58,19 @@ class ServerAuthHandler {
     });
   }
 
-  /// \brief Validate auth information (e.g. a token) per-call.
+  /// \brief Validate authenticity of auth information in the gRPC context.
   ///
+  /// Endpoint-specific checks like access authorization are implemented by
+  /// each FlightServer method
   /// \return Status OK if the token is valid, any other status if
   ///         validation failed.
-  virtual Status Validate(::grpc::ServerContext* context) {
+  virtual Status ValidateGrpcContext(::grpc::ServerContext* context) {
     return Status::NotImplemented("ServerAuthHandler::Validate() isn't implemented");
   }
 };
 
-/// \brief An INSECURE authentication mechanism that simply trusts any client.
+/// \brief An INSECURE authentication mechanism that simply trusts any client
+/// request as valid.
 class TrustAuthHandler final : public ServerAuthHandler {
  public:
   ~TrustAuthHandler() override = default;
@@ -76,9 +79,9 @@ class TrustAuthHandler final : public ServerAuthHandler {
     return std::make_unique<TrustAuthHandler>();
   }
 
-  Status Handshake(::grpc::ServerContext* context,
-                   Reader<protocol::HandshakeRequest>* reader,
-                   Writer<protocol::HandshakeResponse>* writer) override {
+  Status HandshakeGrpc(::grpc::ServerContext* context,
+                       Reader<protocol::HandshakeRequest>* reader,
+                       Writer<protocol::HandshakeResponse>* writer) override {
     return ReadAllHandshakeRequests(
         reader, [](uint64_t protocol_version, const std::string& payload) {
           ARROW_UNUSED(protocol_version);
@@ -87,7 +90,9 @@ class TrustAuthHandler final : public ServerAuthHandler {
         });
   }
 
-  Status Validate(::grpc::ServerContext* context) override { return Status::OK(); }
+  Status ValidateGrpcContext(::grpc::ServerContext* context) override {
+    return Status::OK();
+  }
 };
 
 class FlightServer {
