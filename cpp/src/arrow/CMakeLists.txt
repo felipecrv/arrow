@@ -1286,6 +1286,17 @@ if(ARROW_FLIGHT)
 
   add_custom_target(flight_grpc_gen ALL DEPENDS ${FLIGHT_GENERATED_PROTO_FILES})
 
+  # Linkage for Flight tests
+  set(ARROW_FLIGHT_TEST_LINKAGE "${ARROW_TEST_LINKAGE}")
+  if(Protobuf_USE_STATIC_LIBS)
+    message(STATUS "Linking Arrow Flight tests statically due to static Protobuf")
+    set(ARROW_FLIGHT_TEST_LINKAGE "static")
+  endif()
+  if(NOT ARROW_GRPC_USE_SHARED)
+    message(STATUS "Linking Arrow Flight tests statically due to static gRPC")
+    set(ARROW_FLIGHT_TEST_LINKAGE "static")
+  endif()
+
   add_subdirectory(flight)
   add_subdirectory(flight/ng)
 endif()

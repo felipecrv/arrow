@@ -27,16 +27,6 @@ if(WIN32)
   list(APPEND ARROW_FLIGHT_LINK_LIBS ws2_32.lib)
 endif()
 
-set(ARROW_FLIGHT_TEST_LINKAGE "${ARROW_TEST_LINKAGE}")
-if(Protobuf_USE_STATIC_LIBS)
-  message(STATUS "Linking Arrow Flight tests statically due to static Protobuf")
-  set(ARROW_FLIGHT_TEST_LINKAGE "static")
-endif()
-if(NOT ARROW_GRPC_USE_SHARED)
-  message(STATUS "Linking Arrow Flight tests statically due to static gRPC")
-  set(ARROW_FLIGHT_TEST_LINKAGE "static")
-endif()
-
 set(ARROW_FLIGHT_TEST_INTERFACE_LIBS)
 if(ARROW_BUILD_BENCHMARKS
    OR ARROW_BUILD_INTEGRATION
