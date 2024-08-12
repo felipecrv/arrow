@@ -28,6 +28,20 @@ FlightServer::FlightServer(std::unique_ptr<ServerAuthHandler> auth_handler)
 
 FlightServer::~FlightServer() = default;
 
+Status FlightServer::ListFlightsFromIterator(FlightInfoIterator* iterator,
+                                             Writer<protocol::FlightInfo>* writer) {
+  while (iterator->Valid()) {
+    if (!iterator->Next(writer)) {
+      break;
+    }
+  }
+  return iterator->status();
+}
+
+// Implementation of the FlightService interface returning arrow::Status
+// instead of grpc::Status.
+// -------------------------------------------------------------------------
+
 Status FlightServer::Handshake(::grpc::ServerContext* context,
                                Reader<protocol::HandshakeRequest>* reader,
                                Writer<protocol::HandshakeResponse>* writer) {
@@ -35,7 +49,7 @@ Status FlightServer::Handshake(::grpc::ServerContext* context,
 }
 
 Status FlightServer::ListFlights(::grpc::ServerContext* context,
-                                 const protocol::Criteria* criteria,
+                                 const protocol::Criteria& criteria,
                                  Writer<protocol::FlightInfo>* writer) {
   return Status::NotImplemented("FlightServer::ListFlights()");
 }

@@ -24,6 +24,7 @@
 
 #include "arrow/flight/ng/flight_fwd.h"
 #include "arrow/flight/ng/serde.h"
+#include "arrow/flight/ng/types.h"
 #include "arrow/status.h"
 
 namespace arrow::flight {
@@ -108,13 +109,19 @@ class FlightServer {
 
   ServerAuthHandler& auth_handler() { return *auth_handler_; }
 
+  static Status ListFlightsFromIterator(FlightInfoIterator* iterator,
+                                        Writer<protocol::FlightInfo>* writer);
+
+  // FlightService interface returning arrow::Status instead of grpc::Status.
+  // -------------------------------------------------------------------------
+
   /// Handshake between client and server. Depending on the server, the
   /// handshake may be required to determine the token that should be
   /// used for future operations. Both request and response are streams
   /// to allow multiple round-trips depending on auth mechanism.
   virtual Status Handshake(::grpc::ServerContext* context,
                            Reader<protocol::HandshakeRequest>* reader,
-                           Writer<protocol::HandshakeResponse>* writer) = 0;
+                           Writer<protocol::HandshakeResponse>* writer);
 
   /// Get a list of available streams given a particular criteria. Most flight
   /// services will expose one or more streams that are readily available for
@@ -123,7 +130,7 @@ class FlightServer {
   /// streams that can be listed via this interface. Each flight service allows
   /// its own definition of how to consume criteria.
   virtual Status ListFlights(::grpc::ServerContext* context,
-                             const protocol::Criteria* criteria,
+                             const protocol::Criteria& criteria,
                              Writer<protocol::FlightInfo>* writer) = 0;
 
   /// For a given FlightDescriptor, get information about how the flight can be

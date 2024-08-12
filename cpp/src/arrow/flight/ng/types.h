@@ -20,6 +20,9 @@
 #include <memory>
 
 #include "arrow/buffer.h"
+#include "arrow/flight/ng/flight_fwd.h"
+#include "arrow/flight/ng/iterator.h"
+#include "arrow/flight/ng/serde.h"
 #include "arrow/flight/visibility.h"
 #include "arrow/ipc/writer.h"
 #include "arrow/status.h"
@@ -50,6 +53,14 @@ struct ARROW_FLIGHT_EXPORT FlightPayload {
   Status Validate() const;
 
   void Clear();
+};
+
+class ARROW_FLIGHT_EXPORT FlightInfoIterator
+    : public TypedIterator<protocol::FlightInfo> {
+ public:
+  ~FlightInfoIterator() override = default;
+
+  bool Next(Writer<protocol::FlightInfo>* writer) override = 0;
 };
 
 }  // namespace ng
