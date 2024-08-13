@@ -22,7 +22,7 @@
 
 #include <grpcpp/grpcpp.h>
 
-#include "arrow/flight/Flight.grpc.pb.h"
+#include "arrow/flight/Flight.grpc.pb.h"  // XXX: to be removed
 #include "arrow/flight/ng/grpc_serde.h"
 #include "arrow/flight/ng/server.h"
 #include "arrow/util/string.h"

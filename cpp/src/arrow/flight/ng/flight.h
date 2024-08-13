@@ -16,3 +16,14 @@
 // under the License.
 
 #pragma once
+
+#include "arrow/flight/ng/flight_fwd.h"
+// #include "arrow/flight/ng/grpc_server.h"
+#include "arrow/flight/ng/iterator.h"
+#include "arrow/flight/ng/serde.h"
+#include "arrow/flight/ng/server.h"
+#include "arrow/flight/ng/types.h"
+
+#ifdef GRPCPP_GRPCPP_H
+#error "gRPC headers should not be present in flight.h"
+#endif
