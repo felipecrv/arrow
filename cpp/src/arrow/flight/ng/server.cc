@@ -60,6 +60,12 @@ Status FlightServer::GetFlightInfo(::grpc::ServerContext* context,
   return Status::NotImplemented("FlightServer::GetFlightInfo()");
 }
 
+Status FlightServer::PollFlightInfo(::grpc::ServerContext* context,
+                                    const protocol::FlightDescriptor& request,
+                                    protocol::PollInfo* response) {
+  return Status::NotImplemented("FlightServer::PollFlightInfo()");
+}
+
 Status FlightServer::GetSchema(::grpc::ServerContext* context,
                                const protocol::FlightDescriptor& request,
                                protocol::SchemaResult* out_schema) {

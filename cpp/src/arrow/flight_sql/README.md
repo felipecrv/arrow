@@ -96,7 +96,7 @@ definition of the Flight SQL protocol instead of being hand-written.
     [ ] │   └── visibility.h
     [ ] ├── test_definitions.cc
     [ ] ├── test_definitions.h
-    [ ] ├── test_server.cc
+    [x] ├── test_server.cc
     [ ] ├── test_util.cc
     [ ] ├── test_util.h
     [ ] ├── transport

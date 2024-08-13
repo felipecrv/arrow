@@ -201,7 +201,7 @@ class GrpcFlightServer : public protocol::FlightService::Service {
       ::grpc::ServerWriter<protocol::FlightInfo>* writer) override {
     GrpcWriter<protocol::FlightInfo> response_writer(writer);
     GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
-    GRPC_RETURN_NOT_OK(impl_->ListFlights(context, request, &response_writer));
+    GRPC_RETURN_NOT_OK(impl_->ListFlights(context, *request, &response_writer));
     return ::grpc::Status::OK;
   }
 
@@ -210,6 +210,14 @@ class GrpcFlightServer : public protocol::FlightService::Service {
                                protocol::FlightInfo* response) override {
     GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
     GRPC_RETURN_NOT_OK(impl_->GetFlightInfo(context, *request, response));
+    return ::grpc::Status::OK;
+  }
+
+  ::grpc::Status PollFlightInfo(::grpc::ServerContext* context,
+                                const protocol::FlightDescriptor* request,
+                                protocol::PollInfo* response) override {
+    GRPC_RETURN_NOT_OK(impl_->auth_handler().ValidateGrpcContext(context));
+    GRPC_RETURN_NOT_OK(impl_->PollFlightInfo(context, *request, response));
     return ::grpc::Status::OK;
   }
 

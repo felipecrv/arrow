@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "arrow/flight/ng/grpc_serde.h"
+#include "arrow/flight/ng/test/test_flight_server.h"
 
-// XXX(felipecrv): this will change together with the CMake scripts
-// (to make it possible to build the Flight library without linking to gRPC)
+namespace flight_test {
 
-// NOTE(wesm): Including .cc files in another .cc file would ordinarily be a
-// no-no. We have customized the serialization path for FlightData, which is
-// currently only possible through some pre-processor commands that need to be
-// included before either of these files is compiled. Because we don't want to
-// edit the generated C++ files, we include them here and do our gRPC
-// customizations in protocol_grpc_internal.h
-#include "arrow/flight/Flight.grpc.pb.cc"  // NOLINT
+namespace flight = arrow::flight;
+
+TestFlightServer::TestFlightServer()
+    : flight::FlightServer(std::make_unique<AuthHandler>()) {}
+
+TestFlightServer::~TestFlightServer() = default;
+
+}  // namespace flight_test

@@ -27,43 +27,35 @@ if(WIN32)
   list(APPEND ARROW_FLIGHT_NG_LINK_LIBS ws2_32.lib)
 endif()
 
-set(ARROW_FLIGHT_NG_TEST_LINKAGE "${ARROW_TEST_LINKAGE}")
-if(Protobuf_USE_STATIC_LIBS)
-  message(STATUS "Linking Arrow Flight NG tests statically due to static Protobuf")
-  set(ARROW_FLIGHT_NG_TEST_LINKAGE "static")
-endif()
-if(NOT ARROW_GRPC_USE_SHARED)
-  message(STATUS "Linking Arrow Flight tests statically due to static gRPC")
-  set(ARROW_FLIGHT_NG_TEST_LINKAGE "static")
-endif()
-
 set(ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS)
-# if(ARROW_BUILD_BENCHMARKS
-#    OR ARROW_BUILD_INTEGRATION
-#    OR ARROW_BUILD_TESTS)
-#   if(ARROW_FLIGHT_NG_TEST_LINKAGE STREQUAL "static")
-#     if(NOT ARROW_BUILD_STATIC)
-#       message(STATUS "If static Protobuf or gRPC are used, Arrow must be built statically"
-#       )
-#       message(STATUS "(These libraries have global state, and linkage must be consistent)"
-#       )
-#       message(FATAL_ERROR "Must build Arrow statically to link Flight tests statically")
-#     endif()
-#     set(ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_flight_ng_static arrow_flight_ng_testing_static)
-#     list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS ${ARROW_TEST_STATIC_LINK_LIBS})
-#     if(ARROW_CUDA)
-#       list(APPEND ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS arrow_cuda_static)
-#       list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_cuda_static)
-#     endif()
-#   else()
-#     set(ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_flight_ng_shared arrow_flight_ng_testing_shared
-#                                        ${ARROW_TEST_SHARED_LINK_LIBS})
-#     if(ARROW_CUDA)
-#       list(APPEND ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS arrow_cuda_shared)
-#       list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_cuda_shared)
-#     endif()
-#   endif()
-# endif()
+if(ARROW_BUILD_BENCHMARKS
+   OR ARROW_BUILD_INTEGRATION
+   OR ARROW_BUILD_TESTS)
+  if(ARROW_FLIGHT_TEST_LINKAGE STREQUAL "static")
+    if(NOT ARROW_BUILD_STATIC)
+      message(STATUS "If static Protobuf or gRPC are used, Arrow must be built statically"
+      )
+      message(STATUS "(These libraries have global state, and linkage must be consistent)"
+      )
+      message(FATAL_ERROR "Must build Arrow statically to link Flight tests statically")
+    endif()
+    set(ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_flight_ng_static
+                                       arrow_flight_ng_testing_static)
+    list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS ${ARROW_TEST_STATIC_LINK_LIBS})
+    if(ARROW_CUDA)
+      list(APPEND ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS arrow_cuda_static)
+      list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_cuda_static)
+    endif()
+  else()
+    set(ARROW_FLIGHT_NG_TEST_LINK_LIBS
+        arrow_flight_ng_shared arrow_flight_ng_testing_shared
+        ${ARROW_TEST_SHARED_LINK_LIBS})
+    if(ARROW_CUDA)
+      list(APPEND ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS arrow_cuda_shared)
+      list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS arrow_cuda_shared)
+    endif()
+  endif()
+endif()
 list(APPEND
      ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS
      Boost::headers
@@ -73,8 +65,8 @@ list(APPEND ARROW_FLIGHT_NG_TEST_LINK_LIBS gRPC::grpc++)
 
 # TODO(wesm): Protobuf shared vs static linking
 
-set(FLIGHT_PROTO_PATH "${ARROW_SOURCE_DIR}/../format")
-set(FLIGHT_PROTO "${ARROW_SOURCE_DIR}/../format/Flight.proto")
+# set(FLIGHT_PROTO_PATH "${ARROW_SOURCE_DIR}/../format")
+# set(FLIGHT_PROTO "${ARROW_SOURCE_DIR}/../format/Flight.proto")
 
 # TODO: make a separate CMakeLists for the protobufs
 # ng: Already created by arrow/flight
@@ -84,7 +76,7 @@ set(FLIGHT_PROTO "${ARROW_SOURCE_DIR}/../format/Flight.proto")
 #     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.cc"
 #     "${CMAKE_CURRENT_BINARY_DIR}/../Flight.grpc.pb.h")
 
-set(PROTO_DEPENDS ${FLIGHT_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF} gRPC::grpc_cpp_plugin)
+# set(PROTO_DEPENDS ${FLIGHT_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF} gRPC::grpc_cpp_plugin)
 
 # set(FLIGHT_NG_PROTOC_COMMAND ${ARROW_PROTOBUF_PROTOC} "-I${FLIGHT_NG_PROTO_PATH}")
 # if(Protobuf_VERSION VERSION_LESS 3.15)
@@ -149,7 +141,7 @@ set(ARROW_FLIGHT_NG_SRCS
     # middleware.cc
     serde.cc
     # serialization_internal.cc
-    # server.cc
+    server.cc
     # server_auth.cc
     # server_middleware.cc
     # server_tracing_middleware.cc
@@ -220,73 +212,75 @@ foreach(LIB_TARGET ${ARROW_FLIGHT_NG_LIBRARIES})
 endforeach()
 
 # Define arrow_flight_ng_testing library
-# if(ARROW_TESTING)
-#   if(ARROW_BUILD_SHARED AND ARROW_BUILD_STATIC)
-#     set(ARROW_FLIGHT_TESTING_SHARED_LINK_LIBS arrow_flight_ng_shared)
-#     set(ARROW_FLIGHT_TESTING_STATIC_LINK_LIBS arrow_flight_ng_static)
-#     set(ARROW_FLIGHT_TESTING_SHARED_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_shared)
-#     set(ARROW_FLIGHT_TESTING_STATIC_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_static)
-#   elseif(ARROW_BUILD_SHARED)
-#     set(ARROW_FLIGHT_TESTING_SHARED_LINK_LIBS arrow_flight_ng_shared)
-#     set(ARROW_FLIGHT_TESTING_STATIC_LINK_LIBS arrow_flight_ng_shared)
-#     set(ARROW_FLIGHT_TESTING_SHARED_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_shared)
-#     set(ARROW_FLIGHT_TESTING_STATIC_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_shared)
-#   else()
-#     set(ARROW_FLIGHT_TESTING_SHARED_LINK_LIBS arrow_flight_ng_static)
-#     set(ARROW_FLIGHT_TESTING_STATIC_LINK_LIBS arrow_flight_ng_static)
-#     set(ARROW_FLIGHT_TESTING_SHARED_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_static)
-#     set(ARROW_FLIGHT_TESTING_STATIC_INSTALL_INTERFACE_LIBS
-#         ArrowFlight::arrow_flight_ng_static)
-#   endif()
-#   if(ARROW_FLIGHT_TEST_LINKAGE STREQUAL "shared")
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_testing_shared)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_testing_shared)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
-#          ArrowTesting::arrow_testing_shared)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
-#          ArrowTesting::arrow_testing_shared)
-#   else()
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_testing_static)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_testing_static)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
-#          ArrowTesting::arrow_testing_static)
-#     list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
-#          ArrowTesting::arrow_testing_static)
-#   endif()
-#   list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS ${ARROW_FLIGHT_TEST_INTERFACE_LIBS})
-#   list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS ${ARROW_FLIGHT_TEST_INTERFACE_LIBS})
-#   add_arrow_lib(arrow_flight_ng_testing
-#                 CMAKE_PACKAGE_NAME
-#                 ArrowFlightNgTesting
-#                 PKG_CONFIG_NAME
-#                 arrow-flight-ng-testing
-#                 OUTPUTS
-#                 ARROW_FLIGHT_NG_TESTING_LIBRARIES
-#                 SOURCES
-#                 test_definitions.cc
-#                 test_util.cc
-#                 DEPENDENCIES
-#                 flight_grpc_gen
-#                 SHARED_LINK_LIBS
-#                 ${ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS}
-#                 SHARED_INSTALL_INTERFACE_LIBS
-#                 ${ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS}
-#                 STATIC_LINK_LIBS
-#                 ${ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS}
-#                 STATIC_INSTALL_INTERFACE_LIBS
-#                 ${ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS}
-#                 PRIVATE_INCLUDES
-#                 "${Protobuf_INCLUDE_DIRS}")
+if(ARROW_TESTING)
+  if(ARROW_BUILD_SHARED AND ARROW_BUILD_STATIC)
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_flight_ng_shared)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_flight_ng_static)
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_shared)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_static)
+  elseif(ARROW_BUILD_SHARED)
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_flight_ng_shared)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_flight_ng_shared)
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_shared)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_shared)
+  else()
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_flight_ng_static)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_flight_ng_static)
+    set(ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_static)
+    set(ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
+        ArrowFlight::arrow_flight_ng_static)
+  endif()
+  if(ARROW_FLIGHT_TEST_LINKAGE STREQUAL "shared")
+    list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_testing_shared)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_testing_shared)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
+         ArrowTesting::arrow_testing_shared)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
+         ArrowTesting::arrow_testing_shared)
+  else()
+    list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS arrow_testing_static)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS arrow_testing_static)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS
+         ArrowTesting::arrow_testing_static)
+    list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS
+         ArrowTesting::arrow_testing_static)
+  endif()
+  list(APPEND ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS
+       ${ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS})
+  list(APPEND ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS
+       ${ARROW_FLIGHT_NG_TEST_INTERFACE_LIBS})
+  add_arrow_lib(arrow_flight_ng_testing
+                CMAKE_PACKAGE_NAME
+                ArrowFlightNgTesting
+                PKG_CONFIG_NAME
+                arrow-flight-ng-testing
+                OUTPUTS
+                ARROW_FLIGHT_NG_TESTING_LIBRARIES
+                SOURCES
+                test/test_flight_server.cc
+                # test_util.cc
+                DEPENDENCIES
+                flight_grpc_gen
+                SHARED_LINK_LIBS
+                ${ARROW_FLIGHT_NG_TESTING_SHARED_LINK_LIBS}
+                SHARED_INSTALL_INTERFACE_LIBS
+                ${ARROW_FLIGHT_NG_TESTING_SHARED_INSTALL_INTERFACE_LIBS}
+                STATIC_LINK_LIBS
+                ${ARROW_FLIGHT_NG_TESTING_STATIC_LINK_LIBS}
+                STATIC_INSTALL_INTERFACE_LIBS
+                ${ARROW_FLIGHT_NG_TESTING_STATIC_INSTALL_INTERFACE_LIBS}
+                PRIVATE_INCLUDES
+                "${Protobuf_INCLUDE_DIRS}")
 
-#   foreach(LIB_TARGET ${ARROW_FLIGHT_NG_TESTING_LIBRARIES})
-#     target_compile_definitions(${LIB_TARGET} PRIVATE ARROW_FLIGHT_EXPORTING)
-#   endforeach()
-# endif()
+  foreach(LIB_TARGET ${ARROW_FLIGHT_NG_TESTING_LIBRARIES})
+    target_compile_definitions(${LIB_TARGET} PRIVATE ARROW_FLIGHT_EXPORTING)
+  endforeach()
+endif()
 
 # add_arrow_test(flight_ng_internals_test
 #                STATIC_LINK_LIBS
@@ -300,18 +294,18 @@ endforeach()
 #                LABELS
 #                "arrow_flight_ng")
 
-# # Build test server for unit tests or benchmarks
-# if(ARROW_BUILD_TESTS OR ARROW_BUILD_BENCHMARKS)
-#   add_executable(flight-ng-test-server test_server.cc)
-#   target_link_libraries(flight-ng-test-server ${ARROW_FLIGHT_NG_TEST_LINK_LIBS}
-#                         ${GFLAGS_LIBRARIES})
+# Build test server for unit tests or benchmarks
+if(ARROW_BUILD_TESTS OR ARROW_BUILD_BENCHMARKS)
+  add_executable(flight-ng-test-server test/test_server.cc)
+  target_link_libraries(flight-ng-test-server ${ARROW_FLIGHT_NG_TEST_LINK_LIBS}
+                        ${GFLAGS_LIBRARIES})
 
-#   if(ARROW_BUILD_TESTS)
-#     add_dependencies(arrow-flight-ng-test flight-ng-test-server)
-#   endif()
+  # if(ARROW_BUILD_TESTS)
+  #   add_dependencies(arrow-flight-ng-test flight-ng-test-server)
+  # endif()
 
-#   add_dependencies(arrow_flight_ng flight-ng-test-server)
-# endif()
+  add_dependencies(arrow_flight_ng flight-ng-test-server)
+endif()
 
 # if(ARROW_BUILD_BENCHMARKS)
 #   # Perf server for benchmarks
@@ -336,7 +330,7 @@ endforeach()
 #   add_dependencies(arrow_flight_ng arrow-flight-ng-benchmark)
 
 #   if(ARROW_WITH_UCX)
-#     if(ARROW_FLIGHT_NG_TEST_LINKAGE STREQUAL "static")
+#     if(ARROW_FLIGHT_TEST_LINKAGE STREQUAL "static")
 #       target_link_libraries(arrow-flight-ng-benchmark arrow_flight_ng_transport_ucx_static)
 #       target_link_libraries(arrow-flight-ng-perf-server arrow_flight_ng_transport_ucx_static)
 #     else()

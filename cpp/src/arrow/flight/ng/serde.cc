@@ -141,7 +141,7 @@ Status ReadAllHandshakeRequests(Reader<protocol::HandshakeRequest>* reader,
                                 HandshakeRequestVisitor visitor) {
   protocol::HandshakeRequest request;
   if (!reader->Read(&request)) {
-    return Status::Cancelled();
+    return Status::Cancelled("missing HandshakeRequest");
   }
   do {
     const auto protocol_version = request.protocol_version();

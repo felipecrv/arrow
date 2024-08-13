@@ -79,7 +79,7 @@ class TrustAuthHandler final : public ServerAuthHandler {
  public:
   ~TrustAuthHandler() override = default;
 
-  static std::unique_ptr<TrustAuthHandler> Make() {
+  static std::unique_ptr<ServerAuthHandler> Make() {
     return std::make_unique<TrustAuthHandler>();
   }
 
@@ -131,7 +131,7 @@ class FlightServer {
   /// its own definition of how to consume criteria.
   virtual Status ListFlights(::grpc::ServerContext* context,
                              const protocol::Criteria& criteria,
-                             Writer<protocol::FlightInfo>* writer) = 0;
+                             Writer<protocol::FlightInfo>* writer);
 
   /// For a given FlightDescriptor, get information about how the flight can be
   /// consumed. This is a useful interface if the consumer of the interface
@@ -145,7 +145,33 @@ class FlightServer {
   /// service.
   virtual Status GetFlightInfo(::grpc::ServerContext* context,
                                const protocol::FlightDescriptor& request,
-                               protocol::FlightInfo* out_info) = 0;
+                               protocol::FlightInfo* out_info);
+
+  /// For a given FlightDescriptor, start a query and get information
+  /// to poll its execution status. This is a useful interface if the
+  /// query may be a long-running query. The first PollFlightInfo call
+  /// should return as quickly as possible. (GetFlightInfo doesn't
+  /// return until the query is complete.)
+  ///
+  /// A client can consume any available results before
+  /// the query is completed. See PollInfo.info for details.
+  ///
+  /// A client can poll the updated query status by calling
+  /// PollFlightInfo() with PollInfo.flight_descriptor. A server
+  /// should not respond until the result would be different from last
+  /// time. That way, the client can "long poll" for updates
+  /// without constantly making requests. Clients can set a short timeout
+  /// to avoid blocking calls if desired.
+  ///
+  /// A client can't use PollInfo.flight_descriptor after
+  /// PollInfo.expiration_time passes. A server might not accept the
+  /// retry descriptor anymore and the query may be cancelled.
+  ///
+  /// A client may use the CancelFlightInfo action with
+  /// PollInfo.info to cancel the running query.
+  virtual Status PollFlightInfo(::grpc::ServerContext* context,
+                                const protocol::FlightDescriptor& request,
+                                protocol::PollInfo* response);
 
   /// For a given FlightDescriptor, get the Schema as described in Schema.fbs::Schema
   /// This is used when a consumer needs the Schema of flight stream. Similar to
@@ -153,14 +179,14 @@ class FlightServer {
   /// available in ListFlights.
   virtual Status GetSchema(::grpc::ServerContext* context,
                            const protocol::FlightDescriptor& request,
-                           protocol::SchemaResult* out_schema) = 0;
+                           protocol::SchemaResult* out_schema);
 
   /// Retrieve a single stream associated with a particular descriptor
   /// associated with the referenced ticket. A Flight can be composed of one or
   /// more streams where each stream can be retrieved using a separate opaque
   /// ticket that the flight service uses for managing a collection of streams.
   virtual Status DoGet(::grpc::ServerContext* context, const protocol::Ticket& request,
-                       Writer<FlightPayload>* writer) = 0;
+                       Writer<FlightPayload>* writer);
 
   /// Push a stream to the flight service associated with a particular
   /// flight stream. This allows a client of a flight service to upload a stream
@@ -169,7 +195,7 @@ class FlightServer {
   /// number. In the latter, the service might implement a 'seal' action that
   /// can be applied to a descriptor once all streams are uploaded.
   virtual Status DoPut(::grpc::ServerContext* context, Reader<FlightPayload>* reader,
-                       Writer<protocol::PutResult>* writer) = 0;
+                       Writer<protocol::PutResult>* writer);
 
   /// Open a bidirectional data channel for a given descriptor. This
   /// allows clients to send and receive arbitrary Arrow data and
@@ -186,14 +212,14 @@ class FlightServer {
   /// opaque request and response objects that are specific to the type action
   /// being undertaken.
   virtual Status DoAction(::grpc::ServerContext* context, const protocol::Action& action,
-                          Writer<protocol::Result>* writer) = 0;
+                          Writer<protocol::Result>* writer);
 
   /// A flight service exposes all of the available action types that it has
   /// along with descriptions. This allows different flight consumers to
   /// understand the capabilities of the flight service.
   virtual Status ListActions(::grpc::ServerContext* context,
                              const protocol::Empty* request,
-                             Writer<protocol::ActionType>* writer) = 0;
+                             Writer<protocol::ActionType>* writer);
 };
 
 }  // namespace ng
