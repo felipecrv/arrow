@@ -303,7 +303,7 @@ class GrpcServiceHandler final : public pb::FlightService::Service {
         flight_context.peer_identity_ = "";
       }
     } else {
-      const auto client_metadata = context->client_metadata();
+      const auto& client_metadata = context->client_metadata();
       const auto auth_header = client_metadata.find(kGrpcAuthHeader);
       std::string token;
       if (auth_header == client_metadata.end()) {
