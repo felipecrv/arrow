@@ -67,13 +67,13 @@ inline void AssertEqual(const FlightInfo& expected, const FlightInfo& actual) {
 // ----------------------------------------------------------------------
 // Fixture to use for running test servers
 
-class ARROW_FLIGHT_EXPORT TestServer {
+class ARROW_FLIGHT_EXPORT TestServerProcess {
  public:
-  explicit TestServer(const std::string& executable_name)
+  explicit TestServerProcess(const std::string& executable_name)
       : executable_name_(executable_name), port_(::arrow::GetListenPort()) {}
-  TestServer(const std::string& executable_name, int port)
+  TestServerProcess(const std::string& executable_name, int port)
       : executable_name_(executable_name), port_(port) {}
-  TestServer(const std::string& executable_name, const std::string& unix_sock)
+  TestServerProcess(const std::string& executable_name, const std::string& unix_sock)
       : executable_name_(executable_name), unix_sock_(unix_sock) {}
 
   void Start(const std::vector<std::string>& extra_args);

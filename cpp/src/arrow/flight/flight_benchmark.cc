@@ -447,7 +447,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::unique_ptr<arrow::flight::TestServer> server;
+  std::unique_ptr<arrow::flight::TestServerProcess> server;
   std::vector<std::string> server_args;
   server_args.push_back("-transport");
   server_args.push_back(FLAGS_transport);
@@ -458,8 +458,8 @@ int main(int argc, char** argv) {
       if (FLAGS_server_unix == "") {
         FLAGS_server_unix = "/tmp/flight-bench-spawn.sock";
         std::cout << "Using spawned Unix server" << std::endl;
-        server.reset(
-            new arrow::flight::TestServer("arrow-flight-perf-server", FLAGS_server_unix));
+        server.reset(new arrow::flight::TestServerProcess("arrow-flight-perf-server",
+                                                          FLAGS_server_unix));
       } else {
         std::cout << "Using standalone Unix server" << std::endl;
       }
@@ -470,8 +470,8 @@ int main(int argc, char** argv) {
       if (FLAGS_server_host == "") {
         FLAGS_server_host = "localhost";
         std::cout << "Using spawned TCP server" << std::endl;
-        server.reset(
-            new arrow::flight::TestServer("arrow-flight-perf-server", FLAGS_server_port));
+        server.reset(new arrow::flight::TestServerProcess("arrow-flight-perf-server",
+                                                          FLAGS_server_port));
         if (!FLAGS_cert_file.empty() || !FLAGS_key_file.empty()) {
           if (!FLAGS_cert_file.empty() && !FLAGS_key_file.empty()) {
             std::cout << "Enabling TLS for spawned server" << std::endl;

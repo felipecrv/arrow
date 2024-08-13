@@ -91,7 +91,7 @@ Status ResolveCurrentExecutable(fs::path* out) {
 
 }  // namespace
 
-void TestServer::Start(const std::vector<std::string>& extra_args) {
+void TestServerProcess::Start(const std::vector<std::string>& extra_args) {
   namespace fs = boost::filesystem;
 
   std::string str_port = std::to_string(port_);
@@ -129,7 +129,7 @@ void TestServer::Start(const std::vector<std::string>& extra_args) {
   std::cout << "Server running with pid " << server_process_->id() << std::endl;
 }
 
-int TestServer::Stop() {
+int TestServerProcess::Stop() {
   if (server_process_ && server_process_->valid()) {
 #ifndef _WIN32
     kill(server_process_->id(), SIGTERM);
@@ -145,11 +145,11 @@ int TestServer::Stop() {
   }
 }
 
-bool TestServer::IsRunning() { return server_process_->running(); }
+bool TestServerProcess::IsRunning() { return server_process_->running(); }
 
-int TestServer::port() const { return port_; }
+int TestServerProcess::port() const { return port_; }
 
-const std::string& TestServer::unix_sock() const { return unix_sock_; }
+const std::string& TestServerProcess::unix_sock() const { return unix_sock_; }
 
 FlightInfo MakeFlightInfo(const Schema& schema, const FlightDescriptor& descriptor,
                           const std::vector<FlightEndpoint>& endpoints,

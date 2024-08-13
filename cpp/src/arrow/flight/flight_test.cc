@@ -203,7 +203,7 @@ ARROW_FLIGHT_TEST_ASYNC_CLIENT(GrpcAsyncClientTest);
 // Ad-hoc gRPC-specific tests
 
 TEST(TestFlight, ConnectUri) {
-  TestServer server("flight-test-server");
+  TestServerProcess server("flight-test-server");
   server.Start();
   ASSERT_TRUE(server.IsRunning());
 
@@ -229,7 +229,7 @@ TEST(TestFlight, InvalidUriScheme) {
 
 #ifndef _WIN32
 TEST(TestFlight, ConnectUriUnix) {
-  TestServer server("flight-test-server", "/tmp/flight-test.sock");
+  TestServerProcess server("flight-test-server", "/tmp/flight-test.sock");
   server.Start();
   ASSERT_TRUE(server.IsRunning());
 
