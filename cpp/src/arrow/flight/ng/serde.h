@@ -37,7 +37,10 @@ template <typename W>
 class Writer {
  public:
   virtual ~Writer() = default;
-  virtual bool Write(const W& value) = 0;
+  virtual bool Write(const W& value, bool is_last_message) = 0;
+
+  bool Write(const W& value) { return Write(value, false); }
+  bool WriteLast(const W& value) { return Write(value, true); }
 };
 
 /// \brief Zero-copy visitor for serialized protocol.FlightData messages.

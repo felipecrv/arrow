@@ -140,7 +140,13 @@ class GrpcWriter : public flight::Writer<W> {
  public:
   explicit GrpcWriter(::grpc::internal::WriterInterface<W>* writer) : writer_(writer) {}
   ~GrpcWriter() override = default;
-  bool Write(const W& value) override { return writer_->Write(value); }
+  bool Write(const W& value, bool is_last_message) override {
+    ::grpc::WriteOptions write_opts;
+    if (is_last_message) {
+      write_opts.set_last_message();
+    }
+    return writer_->Write(value, write_opts);
+  }
 };
 
 template <>
@@ -171,9 +177,13 @@ class GrpcWriter<FlightPayload> : public flight::Writer<FlightPayload> {
 
   ~GrpcWriter() override = default;
 
-  bool Write(const FlightPayload& value) override {
+  bool Write(const FlightPayload& value, bool is_last_message) override {
+    ::grpc::WriteOptions write_opts;
+    if (is_last_message) {
+      write_opts.set_last_message();
+    }
     auto& value_as_flight_data = reinterpret_cast<const protocol::FlightData&>(value);
-    return writer_->Write(value_as_flight_data);
+    return writer_->Write(value_as_flight_data, write_opts);
   }
 };
 
