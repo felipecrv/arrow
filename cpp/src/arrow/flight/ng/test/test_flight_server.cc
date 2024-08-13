@@ -15,14 +15,42 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <memory>
+
+#include <grpcpp/grpcpp.h>
+
+#include "arrow/flight/ng/grpc_server.h"
 #include "arrow/flight/ng/test/test_flight_server.h"
 
 namespace flight_test {
 
-namespace flight = arrow::flight;
+// See test/test_server.cc for the usage of this function from main().
+std::unique_ptr<::grpc::Server> BuildAndStartGrpcServer(
+    std::unique_ptr<flight::FlightServer> flight_server,
+    const std::string& server_address,
+    std::shared_ptr<::grpc::ServerCredentials> server_credentials, int* selected_port) {
+  auto grpc_flight_server =
+      std::make_unique<flight::GrpcFlightServer>(std::move(flight_server));
 
-TestFlightServer::TestFlightServer()
-    : flight::FlightServer(std::make_unique<AuthHandler>()) {}
+  ::grpc::ServerBuilder builder;
+  builder.AddListeningPort(server_address, std::move(server_credentials), selected_port);
+  builder.RegisterService(grpc_flight_server.get());
+  // Disable SO_REUSEPORT - it makes debugging/testing a pain as
+  // leftover processes can handle requests on accident
+  builder.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
+  return builder.BuildAndStart();
+}
+
+//------------------------------------------------------------
+// TestFlightServer
+
+TestFlightServer::TestFlightServer(
+    std::unique_ptr<flight::ServerAuthHandler> auth_handler)
+    : flight::FlightServer(std::move(auth_handler)) {}
+
+TestFlightServer::TestFlightServer(std::string username, std::string password)
+    : TestFlightServer(std::make_unique<TestServerAuthHandler>(std::move(username),
+                                                               std::move(password))) {}
 
 TestFlightServer::~TestFlightServer() = default;
 

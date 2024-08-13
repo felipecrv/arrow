@@ -262,6 +262,7 @@ if(ARROW_TESTING)
                 OUTPUTS
                 ARROW_FLIGHT_NG_TESTING_LIBRARIES
                 SOURCES
+                test/test_auth_handlers.cc
                 test/test_flight_server.cc
                 # test_util.cc
                 DEPENDENCIES

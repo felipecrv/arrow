@@ -25,23 +25,6 @@
 #include "arrow/flight/ng/test/test_flight_server.h"
 #include "arrow/util/io_util.h"
 
-std::unique_ptr<::grpc::Server> BuildAndStartGrpcServer(
-    std::unique_ptr<arrow::flight::FlightServer> flight_server,
-    const std::string& server_address,
-    std::shared_ptr<::grpc::ServerCredentials> server_credentials,
-    int* selected_port = nullptr) {
-  auto grpc_flight_server =
-      std::make_unique<arrow::flight::GrpcFlightServer>(std::move(flight_server));
-
-  ::grpc::ServerBuilder builder;
-  builder.AddListeningPort(server_address, std::move(server_credentials), selected_port);
-  builder.RegisterService(grpc_flight_server.get());
-  // Disable SO_REUSEPORT - it makes debugging/testing a pain as
-  // leftover processes can handle requests on accident
-  builder.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
-  return builder.BuildAndStart();
-}
-
 std::shared_ptr<::grpc::Server> g_server = nullptr;
 
 void HandleSignal(int signum) {
@@ -64,7 +47,8 @@ DEFINE_string(unix, "", "Unix socket path to listen on");
 int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-  auto flight_server = std::make_unique<flight_test::TestFlightServer>();
+  auto flight_server =
+      std::make_unique<flight_test::TestFlightServer>("flight-user", "token123");
 
   // Build the server address for gRPC.
   std::string server_address;
