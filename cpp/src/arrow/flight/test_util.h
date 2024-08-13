@@ -96,11 +96,12 @@ class ARROW_FLIGHT_EXPORT TestServerProcess {
 // Helper to initialize a server and matching client with callbacks to
 // populate options.
 template <typename T, typename... Args>
-Status MakeServer(const Location& location, std::unique_ptr<FlightServerBase>* server,
-                  std::unique_ptr<FlightClient>* client,
-                  std::function<Status(FlightServerOptions*)> make_server_options,
-                  std::function<Status(FlightClientOptions*)> make_client_options,
-                  Args&&... server_args) {
+Status MakeServerProcess(const Location& location,
+                         std::unique_ptr<FlightServerBase>* server,
+                         std::unique_ptr<FlightClient>* client,
+                         std::function<Status(FlightServerOptions*)> make_server_options,
+                         std::function<Status(FlightClientOptions*)> make_client_options,
+                         Args&&... server_args) {
   *server = std::make_unique<T>(std::forward<Args>(server_args)...);
   FlightServerOptions server_options(location);
   RETURN_NOT_OK(make_server_options(&server_options));
@@ -116,15 +117,15 @@ Status MakeServer(const Location& location, std::unique_ptr<FlightServerBase>* s
 // Helper to initialize a server and matching client with callbacks to
 // populate options.
 template <typename T, typename... Args>
-Status MakeServer(std::unique_ptr<FlightServerBase>* server,
-                  std::unique_ptr<FlightClient>* client,
-                  std::function<Status(FlightServerOptions*)> make_server_options,
-                  std::function<Status(FlightClientOptions*)> make_client_options,
-                  Args&&... server_args) {
+Status MakeServerProcess(std::unique_ptr<FlightServerBase>* server,
+                         std::unique_ptr<FlightClient>* client,
+                         std::function<Status(FlightServerOptions*)> make_server_options,
+                         std::function<Status(FlightClientOptions*)> make_client_options,
+                         Args&&... server_args) {
   ARROW_ASSIGN_OR_RAISE(auto location, Location::ForGrpcTcp("localhost", 0));
-  return MakeServer<T>(location, server, client, std::move(make_server_options),
-                       std::move(make_client_options),
-                       std::forward<Args>(server_args)...);
+  return MakeServerProcess<T>(location, server, client, std::move(make_server_options),
+                              std::move(make_client_options),
+                              std::forward<Args>(server_args)...);
 }
 
 // ----------------------------------------------------------------------

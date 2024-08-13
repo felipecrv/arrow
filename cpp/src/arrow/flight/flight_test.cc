@@ -406,7 +406,7 @@ class HeaderAuthTestServer : public FlightServerBase {
 class TestAuthHandler : public ::testing::Test {
  public:
   void SetUp() {
-    ASSERT_OK(MakeServer<AuthTestServer>(
+    ASSERT_OK(MakeServerProcess<AuthTestServer>(
         &server_, &client_,
         [](FlightServerOptions* options) {
           options->auth_handler =
@@ -429,7 +429,7 @@ class TestAuthHandler : public ::testing::Test {
 class TestBasicAuthHandler : public ::testing::Test {
  public:
   void SetUp() {
-    ASSERT_OK(MakeServer<AuthTestServer>(
+    ASSERT_OK(MakeServerProcess<AuthTestServer>(
         &server_, &client_,
         [](FlightServerOptions* options) {
           options->auth_handler =
@@ -782,7 +782,7 @@ class PropagatingTestServer : public FlightServerBase {
 class TestRejectServerMiddleware : public ::testing::Test {
  public:
   void SetUp() {
-    ASSERT_OK(MakeServer<AppMetadataTestServer>(
+    ASSERT_OK(MakeServerProcess<AppMetadataTestServer>(
         &server_, &client_,
         [](FlightServerOptions* options) {
           options->middleware.push_back(
@@ -806,7 +806,7 @@ class TestCountingServerMiddleware : public ::testing::Test {
  public:
   void SetUp() {
     request_counter_ = std::make_shared<CountingServerMiddlewareFactory>();
-    ASSERT_OK(MakeServer<AppMetadataTestServer>(
+    ASSERT_OK(MakeServerProcess<AppMetadataTestServer>(
         &server_, &client_,
         [&](FlightServerOptions* options) {
           options->middleware.push_back({"request_counter", request_counter_});
@@ -841,7 +841,7 @@ class TestPropagatingMiddleware : public ::testing::Test {
     client_middleware_ = std::make_shared<PropagatingClientMiddlewareFactory>();
 
     std::unique_ptr<FlightClient> server_client;
-    ASSERT_OK(MakeServer<ReportContextTestServer>(
+    ASSERT_OK(MakeServerProcess<ReportContextTestServer>(
         &second_server_, &server_client,
         [&](FlightServerOptions* options) {
           options->middleware.push_back({"tracing", server_middleware_});
@@ -852,7 +852,7 @@ class TestPropagatingMiddleware : public ::testing::Test {
           return Status::OK();
         }));
 
-    ASSERT_OK(MakeServer<PropagatingTestServer>(
+    ASSERT_OK(MakeServerProcess<PropagatingTestServer>(
         &first_server_, &client_,
         [&](FlightServerOptions* options) {
           options->middleware.push_back({"tracing", server_middleware_});
@@ -898,7 +898,7 @@ class TestPropagatingMiddleware : public ::testing::Test {
 class TestErrorMiddleware : public ::testing::Test {
  public:
   void SetUp() {
-    ASSERT_OK(MakeServer<ErrorMiddlewareServer>(
+    ASSERT_OK(MakeServerProcess<ErrorMiddlewareServer>(
         &server_, &client_, [](FlightServerOptions* options) { return Status::OK(); },
         [](FlightClientOptions* options) { return Status::OK(); }));
   }
@@ -920,7 +920,7 @@ class TestBasicHeaderAuthMiddleware : public ::testing::Test {
     bearer_middleware_ = std::make_shared<BearerAuthServerMiddlewareFactory>();
     std::pair<std::string, std::string> bearer = make_pair(
         kAuthHeader, std::string(kBearerPrefix) + " " + std::string(kBearerToken));
-    ASSERT_OK(MakeServer<HeaderAuthTestServer>(
+    ASSERT_OK(MakeServerProcess<HeaderAuthTestServer>(
         &server_, &client_,
         [&](FlightServerOptions* options) {
           options->auth_handler = std::make_unique<NoOpAuthHandler>();
@@ -1577,7 +1577,7 @@ class CancelTestServer : public FlightServerBase {
 class TestCancel : public ::testing::Test {
  public:
   void SetUp() {
-    ASSERT_OK(MakeServer<CancelTestServer>(
+    ASSERT_OK(MakeServerProcess<CancelTestServer>(
         &server_, &client_, [](FlightServerOptions* options) { return Status::OK(); },
         [](FlightClientOptions* options) { return Status::OK(); }));
   }
@@ -1712,7 +1712,7 @@ class TracingTestServer : public FlightServerBase {
 class TestTracing : public ::testing::Test {
  public:
   void SetUp() override {
-    ASSERT_OK(MakeServer<TracingTestServer>(
+    ASSERT_OK(MakeServerProcess<TracingTestServer>(
         &server_, &client_,
         [](FlightServerOptions* options) {
           options->middleware.emplace_back("tracing",

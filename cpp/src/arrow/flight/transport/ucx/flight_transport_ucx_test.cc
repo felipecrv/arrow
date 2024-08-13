@@ -262,7 +262,7 @@ class TestUcx : public ::testing::Test {
  public:
   void SetUp() {
     ASSERT_OK_AND_ASSIGN(auto location, Location::ForScheme("ucx", "127.0.0.1", 0));
-    ASSERT_OK(MakeServer<SimpleTestServer>(
+    ASSERT_OK(MakeServerProcess<SimpleTestServer>(
         location, &server_, &client_,
         [](FlightServerOptions* options) { return Status::OK(); },
         [](FlightClientOptions* options) { return Status::OK(); }));

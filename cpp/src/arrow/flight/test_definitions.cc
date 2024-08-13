@@ -699,7 +699,7 @@ class DoPutTestServer : public FlightServerBase {
 
 void DoPutTest::SetUpTest() {
   ASSERT_OK_AND_ASSIGN(auto location, Location::ForScheme(transport(), "127.0.0.1", 0));
-  ASSERT_OK(MakeServer<DoPutTestServer>(
+  ASSERT_OK(MakeServerProcess<DoPutTestServer>(
       location, &server_, &client_,
       [](FlightServerOptions* options) { return Status::OK(); },
       [](FlightClientOptions* options) { return Status::OK(); }));
@@ -927,7 +927,7 @@ Status AppMetadataTestServer::DoPut(const ServerCallContext& context,
 
 void AppMetadataTest::SetUpTest() {
   ASSERT_OK_AND_ASSIGN(auto location, Location::ForScheme(transport(), "127.0.0.1", 0));
-  ASSERT_OK(MakeServer<AppMetadataTestServer>(
+  ASSERT_OK(MakeServerProcess<AppMetadataTestServer>(
       location, &server_, &client_,
       [](FlightServerOptions* options) { return Status::OK(); },
       [](FlightClientOptions* options) { return Status::OK(); }));
@@ -1106,7 +1106,7 @@ class IpcOptionsTestServer : public FlightServerBase {
 
 void IpcOptionsTest::SetUpTest() {
   ASSERT_OK_AND_ASSIGN(auto location, Location::ForScheme(transport(), "127.0.0.1", 0));
-  ASSERT_OK(MakeServer<IpcOptionsTestServer>(
+  ASSERT_OK(MakeServerProcess<IpcOptionsTestServer>(
       location, &server_, &client_,
       [](FlightServerOptions* options) { return Status::OK(); },
       [](FlightClientOptions* options) { return Status::OK(); }));
@@ -1592,7 +1592,7 @@ struct ErrorHandlingTest::Impl {
 void ErrorHandlingTest::SetUpTest() {
   impl_ = std::make_shared<Impl>();
   ASSERT_OK_AND_ASSIGN(auto location, Location::ForScheme(transport(), "127.0.0.1", 0));
-  ASSERT_OK(MakeServer<ErrorHandlingTestServer>(
+  ASSERT_OK(MakeServerProcess<ErrorHandlingTestServer>(
       location, &server_, &client_,
       [](FlightServerOptions* options) { return Status::OK(); },
       [&](FlightClientOptions* options) {
